@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from api.routes.run import router as run_router
 from api.routes.status import router as status_router
+from api.routes.resume import router as resume_router
 
 load_dotenv()
 
@@ -24,7 +25,7 @@ app = FastAPI(
 
 app.include_router(run_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
-
+app.include_router(resume_router, prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
