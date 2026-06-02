@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
 from agent.state import AgentState
 from agent.nodes.agent_node import agent_node
@@ -8,7 +9,7 @@ from agent.nodes.summarize_node import summarize_node
 from agent.nodes.human_node import human_node
 from agent.routing import should_continue, should_summarize
 
-def build_graph():
+def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
 
     graph.add_node("agent", agent_node)
@@ -30,7 +31,8 @@ def build_graph():
     graph.add_edge("summarize", "agent")
     graph.add_edge("human", END)
 
-    checkpointer = MemorySaver()
+    if checkpointer is None:
+        checkpointer = MemorySaver()
     return graph.compile(
         checkpointer=checkpointer,
         interrupt_before=["human"],

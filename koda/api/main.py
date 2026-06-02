@@ -12,8 +12,13 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from agent.graph import compiled_graph
+    from infra.redis_client import get_redis, close_redis
+    from infra.postgres import create_tables
     app.state.graph = compiled_graph
+    app.state.redis = await get_redis()
+    await create_tables()
     yield
+    await close_redis()
 
 
 app = FastAPI(
