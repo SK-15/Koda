@@ -18,20 +18,23 @@ def build_graph():
 
     graph.set_entry_point("agent")
 
-    graph.add_conditional_edge("agent", should_continue, 
-                               {"tools" : "tools",
-                                "human" : "human",
-                                "end" : END})
-    
-    graph.add_conditional_edge("agent", should_continue, 
-                               {"summarize" : "summarize",
-                                "agent" : "agent"})
-    
+    graph.add_conditional_edges("agent", should_continue,
+                               {"tools": "tools",
+                                "human": "human",
+                                "end": END})
+
+    graph.add_conditional_edges("tools", should_summarize,
+                               {"summarize": "summarize",
+                                "agent": "agent"})
+
     graph.add_edge("summarize", "agent")
     graph.add_edge("human", END)
 
     checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["human"],
+    )
 
 compiled_graph = build_graph()
 

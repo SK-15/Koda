@@ -1,5 +1,5 @@
 import subprocess
-from pahtlib import Path
+from pathlib import Path
 from pydantic import BaseModel
 from tools.base import BaseTool, trim_tool_output
 
@@ -32,7 +32,9 @@ class GrepTool(BaseTool):
 
         if not input.case_sensitive:
             cmd.append("-i")
-        
+
+        cmd += [input.pattern, str(search_path)]
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
         if result.returncode == 1:

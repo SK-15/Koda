@@ -1,4 +1,4 @@
-from pahtlib import Path
+from pathlib import Path
 from pydantic import BaseModel
 from tools.base import BaseTool, trim_tool_output
 

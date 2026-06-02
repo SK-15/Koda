@@ -11,11 +11,11 @@ class BaseTool(ABC):
     requires_approval: bool
 
     @abstractmethod
-    async def execute(self,inout: ToolInput) -> str:
+    async def execute(self, input: ToolInput, state: dict) -> str:
         pass
 
     @abstractmethod
-    async def validate_inout(self, inout: ToolInput) -> bool:
+    def validate_input(self, input: ToolInput, workspace_path: str) -> bool:
         pass
 
 def trim_tool_output(output: str, max_tokens: int) -> str:

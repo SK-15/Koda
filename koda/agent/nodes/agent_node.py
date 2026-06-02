@@ -1,5 +1,5 @@
-from langchain_core.messages import AIMessages, SysteemMessage
-from llm.rounter import get_llm
+from langchain_core.messages import AIMessage, SystemMessage
+from llm.router import get_llm
 
 def build_system_prompt(state: dict) -> str:
 
@@ -24,17 +24,17 @@ async def agent_node(state: dict) -> str:
     if iterations > state['max_iterations']:
         return {
             "iterations" : iterations,
-            "messages" : state['messages'] + [AIMessages(content="Reached max iterations. Stopping execution.")]
+            "messages" : state['messages'] + [AIMessage(content="Reached max iterations. Stopping execution.")]
         }
     
     if state['cost_usd'] >= state['budget_limit_usd']:
         return {
             "iterations" : iterations,
-            "messages" : state['messages'] + [AIMessages(content=f"Budget limit ${state['budget_limit_used']} reached. Stopping execution.")]
+            "messages" : state['messages'] + [AIMessage(content=f"Budget limit ${state['budget_limit_usd']} reached. Stopping execution.")]
         }
     
     system_prmpt = build_system_prompt(state)
-    messages = [SysteemMessage(content=system_prmpt)] + state['messages']
+    messages = [SystemMessage(content=system_prmpt)] + state['messages']
     llm = get_llm()
     response = await llm.ainvoke(messages)
 

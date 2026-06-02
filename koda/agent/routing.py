@@ -1,6 +1,6 @@
-from tool.registry import get_tool
+from tools.registry import get_tool
 
-def shoudl_continue(state: dict) -> str:
+def should_continue(state: dict) -> str:
     if state['iterations'] >= state['max_iterations']:
         return "end"
     if state['cost_usd'] >= state['budget_limit_usd']:

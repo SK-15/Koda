@@ -1,6 +1,6 @@
 import asyncio
 import os
-from koda.infra.celery_app import Celery
+from celery import Celery
 from langchain_core.messages import HumanMessage
 
 celery_app = Celery(
