@@ -1,6 +1,10 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+
+try:
+    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+except ImportError:
+    AsyncRedisSaver = None
 
 from agent.state import AgentState
 from agent.nodes.agent_node import agent_node

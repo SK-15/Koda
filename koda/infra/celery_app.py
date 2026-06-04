@@ -2,6 +2,7 @@ import asyncio
 import os
 from celery import Celery
 from langchain_core.messages import HumanMessage
+from celery.schedules import crontab
 
 celery_app = Celery(
       "koda",
@@ -13,6 +14,13 @@ celery_app.conf.task_routes = {
     "infra.celery_app.run_graph_task": {"queue": "agent"},
 }
 
+celery_app.conf.beat_schedule = {
+    "auto-dream-every-10-min": {
+        "task": "memory.auto_dream.run_auto_dream",
+        "schedule": crontab(minute="*/10"),
+        "args": [],
+    },
+}
 
 @celery_app.task(queue="agent", bind=True, max_retries=2, time_limit=600)
 def run_graph_task(

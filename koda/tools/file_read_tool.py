@@ -2,7 +2,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from tools.base import BaseTool, ToolInput, trim_tool_output
 
-class FilereadInput(BaseModel):
+class FileReadInput(BaseModel):
     path: str
     offset: int = 0
     limit: int = 2000
@@ -11,12 +11,13 @@ class FileReadTool(BaseTool):
     name = "file_read"
     description = "Read a file from the workspace. Returns file contents trimmed to 2000 tokens"
     risk_level = "low"
+    requires_approval = False
 
-    def validate_input(self, input: FilereadInput, workspace_path: str) -> bool:
+    def validate_input(self, input: FileReadInput, workspace_path: str) -> bool:
         resolved = Path(workspace_path).joinpath(input.path).resolve()
         return str(resolved).startswith(str(Path(workspace_path).resolve()))
     
-    async def execute(self, input: FilereadInput, state: dict) -> str:
+    async def execute(self, input: FileReadInput, state: dict) -> str:
         workspace_path = state["workspace_path"]
 
         if not self.validate_input(input, workspace_path):
