@@ -32,6 +32,7 @@ def run_graph_task(
     user_id: str,
     budget_limit_usd: float,
     max_iterations: int,
+    model: str = None,
 ):
     from agent.graph import compiled_graph
 
@@ -52,6 +53,7 @@ def run_graph_task(
         "tokens_used": 0,
         "cost_usd": 0.0,
         "budget_limit_usd": budget_limit_usd,
+        "model": model,
     }
 
     config = {"configurable": {"thread_id": thread_id}}

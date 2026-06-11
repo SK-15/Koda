@@ -36,7 +36,7 @@ async def agent_node(state: dict) -> str:
     
     system_prompt = build_system_prompt(state)
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = get_llm()
+    llm = get_llm(model=state.get("model"))
     response = await llm.ainvoke(messages)
 
     input_tokens = response.usage_metadata.get("input_tokens", 0)

@@ -29,5 +29,8 @@ class AgentState(TypedDict):
     # Cost tracking
     tokens_used: int
     cost_usd: float
-    budget_limit_usd: float 
+    budget_limit_usd: float
+
+    # LLM selection
+    model: str | None
 

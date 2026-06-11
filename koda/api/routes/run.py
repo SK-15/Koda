@@ -14,6 +14,7 @@ class RunRequest(BaseModel):
     user_id: str = "default"
     budget_limit_usd: float = 2.00
     max_iterations: int = 20
+    model: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -34,6 +35,7 @@ async def run(request: RunRequest):
         user_id=request.user_id,
         budget_limit_usd=request.budget_limit_usd,
         max_iterations=request.max_iterations,
+        model=request.model,
     )
 
     return RunResponse(

@@ -21,11 +21,22 @@ class ThreadRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+def _get_db_url() -> str:
+    url = os.getenv("NOEN_CONN_STRING") or os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError("No database URL set. Add NOEN_CONN_STRING to .env")
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "sslmode=require" in url:
+        url = url.replace("sslmode=require", "ssl=require")
+    return url
+
+
 engine = create_async_engine(
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/koda"),
+    _get_db_url(),
     echo=False,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,
+    max_overflow=10,
 )
 
 AsyncSessionLocal = async_sessionmaker(
