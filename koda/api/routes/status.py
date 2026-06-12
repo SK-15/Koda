@@ -1,7 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-
-from infra.celery_app import celery_app
+from infra.task_store import get_task_status
 
 router = APIRouter()
 
@@ -14,10 +13,9 @@ class StatusResponse(BaseModel):
 
 @router.get("/status/{task_id}", response_model=StatusResponse)
 async def status(task_id: str):
-    task = celery_app.AsyncResult(task_id)
-
+    task = await get_task_status(task_id)
     return StatusResponse(
         task_id=task_id,
-        status=task.status,
-        result=str(task.result) if task.ready() else None,
+        status=task["status"],
+        result=task["result"],
     )
