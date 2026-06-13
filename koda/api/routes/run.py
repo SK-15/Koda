@@ -3,7 +3,7 @@ from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
-from agent.graph import compiled_graph
+from agent.graph import get_compiled_graph
 from infra.task_store import set_task_status
 
 router = APIRouter()
@@ -29,7 +29,7 @@ async def _run_graph(task_id: str, thread_id: str, initial_state: dict):
     await set_task_status(task_id, "running")
     try:
         config = {"configurable": {"thread_id": thread_id}}
-        result = await compiled_graph.ainvoke(initial_state, config=config)
+        result = await get_compiled_graph().ainvoke(initial_state, config=config)
         last_message = result["messages"][-1]
         await set_task_status(task_id, "success", last_message.content)
     except Exception as e:

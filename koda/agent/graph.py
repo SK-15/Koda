@@ -1,10 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-try:
-    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-except ImportError:
-    AsyncRedisSaver = None
 
 from agent.state import AgentState
 from agent.nodes.agent_node import agent_node
@@ -42,6 +38,12 @@ def build_graph(checkpointer=None):
         interrupt_before=["human"],
     )
 
-compiled_graph = build_graph()
+compiled_graph = None  # initialized in api/main.py lifespan with Redis checkpointer
+
+
+def get_compiled_graph():
+    if compiled_graph is None:
+        return build_graph()
+    return compiled_graph
 
     

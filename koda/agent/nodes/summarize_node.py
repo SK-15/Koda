@@ -9,7 +9,7 @@ SUMMARIZE_PROMPT = """Summarize the conversation below into 3-5 sentences.
   {messages}
   """
 
-async def summarize_node(state: dict) -> str:
+async def summarize_node(state: dict) -> dict:
     messages = state['messages']
 
     to_summarize = messages[:-4]
@@ -29,6 +29,6 @@ async def summarize_node(state: dict) -> str:
         new_summary = response.content
 
     return {
-        "mssages" : keep_messages,
+        "messages" : keep_messages,
         "summary" : new_summary
     }  
