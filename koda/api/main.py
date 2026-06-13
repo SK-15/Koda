@@ -14,22 +14,12 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     import agent.graph as agent_graph
     from agent.graph import build_graph
-    try:
-        from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-    except ImportError:
-        AsyncRedisSaver = None
     from infra.redis_client import get_redis, close_redis
     from infra.postgres import create_tables
 
     app.state.redis = await get_redis()
     await create_tables()
-
-    if AsyncRedisSaver is not None:
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        checkpointer = AsyncRedisSaver.from_conn_string(redis_url)
-        agent_graph.compiled_graph = build_graph(checkpointer=checkpointer)
-    else:
-        agent_graph.compiled_graph = build_graph()
+    agent_graph.compiled_graph = build_graph()
 
     yield
     await close_redis()

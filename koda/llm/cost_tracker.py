@@ -1,6 +1,6 @@
 import os
 from sqlalchemy import select, update
-from infra.postgres import AsyncSessionLocal, ThreadRecord
+from infra.postgres import get_session_factory, ThreadRecord
 
 
 COST_PER_1K_INPUT_TOKENS = 0.003   # claude-sonnet-4-5 pricing
@@ -24,7 +24,7 @@ async def record_usage(
     cost = estimate_cost(input_tokens, output_tokens)
     total_tokens = input_tokens + output_tokens
 
-    async with AsyncSessionLocal() as session:
+    async with get_session_factory()() as session:
         result = await session.execute(
             select(ThreadRecord).where(ThreadRecord.thread_id == thread_id)
         )
