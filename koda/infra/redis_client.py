@@ -10,7 +10,6 @@ async def get_redis() -> aioredis.Redis:
             os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             encoding="utf-8",
             decode_responses=True,
-            ssl_cert_reqs=None,
         )
     return _redis_client
 
