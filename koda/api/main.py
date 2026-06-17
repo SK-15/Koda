@@ -15,10 +15,8 @@ async def lifespan(app: FastAPI):
     import agent.graph as agent_graph
     from agent.graph import build_graph
     from infra.redis_client import get_redis, close_redis
-    from infra.postgres import create_tables
 
     app.state.redis = await get_redis()
-    await create_tables()
     agent_graph.compiled_graph = build_graph()
 
     yield

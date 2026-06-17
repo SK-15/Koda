@@ -1,5 +1,4 @@
 import os
-import ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, String, Text, Float, Integer, DateTime, func
@@ -48,14 +47,11 @@ _session_factory = None
 def get_engine():
     global _engine
     if _engine is None:
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
         _engine = create_async_engine(
             _get_db_url(),
             echo=False,
             poolclass=NullPool,
-            connect_args={"ssl": ssl_ctx},
+            connect_args={"ssl": "require"},
         )
     return _engine
 
