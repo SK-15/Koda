@@ -1,4 +1,5 @@
 from tools.file_read_tool import FileReadTool, FileReadInput
+from tools.file_write_tool import FileWriteTool, FileWriteInput
 from tools.grep_tool import GrepTool, GrepInput
 from tools.glob_tool import GlobTool, GlobInput
 from tools.bash_tool import BashTool, BashInput
@@ -12,6 +13,7 @@ def _register(tool_instance, input_class):
 
 
 _register(FileReadTool(), FileReadInput)
+_register(FileWriteTool(), FileWriteInput)
 _register(GrepTool(), GrepInput)
 _register(GlobTool(), GlobInput)
 _register(BashTool(), BashInput)

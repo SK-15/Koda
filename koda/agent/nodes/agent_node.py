@@ -9,6 +9,7 @@ def build_system_prompt(state: dict) -> str:
         f"Your current workspace is: {workspace}",
         "All file paths you use with tools must be relative to the workspace root (not absolute).",
         "Before answering, always explore the workspace first using the glob tool (pattern='**/*') to discover what files exist.",
+        "When asked to modify or add code: read the file first, then use file_write to write the complete updated file. Do NOT just describe what you would do — actually do it using tools.",
         "Use tools to gather information before drawing conclusions. Think step by step. Be precise.",
     ]
 

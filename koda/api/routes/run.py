@@ -31,7 +31,15 @@ async def _run_graph(task_id: str, thread_id: str, initial_state: dict):
         config = {"configurable": {"thread_id": thread_id}}
         result = await get_compiled_graph().ainvoke(initial_state, config=config)
         last_message = result["messages"][-1]
-        await set_task_status(task_id, "success", last_message.content)
+        content = last_message.content
+        if isinstance(content, list):
+            # extract text blocks from tool_use responses
+            content = " ".join(
+                block["text"] if isinstance(block, dict) else str(block)
+                for block in content
+                if not isinstance(block, dict) or block.get("type") != "tool_use"
+            )
+        await set_task_status(task_id, "success", str(content))
     except Exception as e:
         await set_task_status(task_id, "failed", str(e))
 
