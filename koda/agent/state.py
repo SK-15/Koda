@@ -15,7 +15,13 @@ class AgentState(TypedDict):
 
     # human in the loop
     approved: bool | None
-    awainting_approval: bool
+    awaiting_approval: bool
+
+    #Planning
+    plan: list[dict] | None         # [{"id": 1, "description": "...", "status": "pending"}]
+    plan_approved: bool | None      # None = not decided, True = execute, False = rejected
+    plan_mode: bool                 # per-run flag from RunRequest
+    current_step: int               # index into plan (starts at 0)
 
     # Memory
     memory_index : str

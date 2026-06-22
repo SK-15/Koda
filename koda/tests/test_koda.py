@@ -260,3 +260,18 @@ class TestTrimOutput:
         result = self.trim(long_text, max_tokens=100)
         assert "trimmed" in result
         assert len(result) < len(long_text)
+
+class TestPlanState:
+    def test_plan_fields_declared(self):
+        from agent.state import AgentState
+        ann = AgentState.__annotations__
+        assert "plan" in ann
+        assert "plan_approved" in ann
+        assert "plan_mode" in ann
+        assert "current_step" in ann
+
+    def test_approval_typo_fixed(self):
+        from agent.state import AgentState
+        ann = AgentState.__annotations__
+        assert "awaiting_approval" in ann
+        assert "awainting_approval" not in ann
