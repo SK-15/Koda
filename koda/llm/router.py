@@ -27,7 +27,7 @@ def _get_tool_schemas() -> list:
     return schemas
 
 
-def get_llm(model: str = None):
+def _build_base_llm(model: str = None):
     from langchain_anthropic import ChatAnthropic
     from langchain_openai import ChatOpenAI
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -43,33 +43,25 @@ def get_llm(model: str = None):
     params = get_litellm_params(model, config)
 
     if provider == "anthropic":
-        llm = ChatAnthropic(
-            model=model_name,
-            api_key=params.get("api_key"),
-            max_tokens=4096,
-        )
+        llm = ChatAnthropic(model=model_name, api_key=params.get("api_key"), max_tokens=4096)
     elif provider == "openai":
-        llm = ChatOpenAI(
-            model=model_name,
-            api_key=params.get("api_key"),
-        )
+        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"))
     elif provider == "gemini":
-        llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=params.get("api_key"),
-        )
+        llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=params.get("api_key"))
     elif provider == "ollama":
-        llm = ChatOllama(
-            model=model_name,
-            base_url=params.get("api_base", "http://localhost:11434"),
-        )
+        llm = ChatOllama(model=model_name, base_url=params.get("api_base", "http://localhost:11434"))
     elif provider == "deepseek":
-        llm = ChatOpenAI(
-            model=model_name,
-            api_key=params.get("api_key"),
-            base_url=params.get("api_base"),
-        )
+        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"), base_url=params.get("api_base"))
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
-    return llm.bind_tools(_get_tool_schemas())
+    return llm
+
+
+def get_llm(model: str = None):
+    return _build_base_llm(model).bind_tools(_get_tool_schemas())
+
+
+def get_planner_llm(model: str = None):
+    from agent.plan_schema import Plan
+    return _build_base_llm(model).with_structured_output(Plan)

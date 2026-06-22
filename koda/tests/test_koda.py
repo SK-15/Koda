@@ -275,3 +275,15 @@ class TestPlanState:
         ann = AgentState.__annotations__
         assert "awaiting_approval" in ann
         assert "awainting_approval" not in ann
+
+class TestPlanSchema:
+    def test_plan_parses_steps(self):
+        from agent.plan_schema import Plan
+        p = Plan(steps=[{"description": "read main.py"}, {"description": "edit it"}])
+        assert len(p.steps) == 2
+        assert p.steps[0].description == "read main.py"
+
+    def test_router_exposes_planner_builder(self):
+        import llm.router as router
+        assert hasattr(router, "get_planner_llm")
+        assert hasattr(router, "_build_base_llm")
