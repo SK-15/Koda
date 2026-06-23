@@ -313,3 +313,36 @@ class TestPlannerNode:
             {"id": 1, "description": "step A", "status": "pending"},
             {"id": 2, "description": "step B", "status": "pending"},
         ]
+
+class TestPlanReviewNode:
+    @pytest.mark.asyncio
+    async def test_approved_clears_waiting(self):
+        from agent.nodes.plan_review_node import plan_review_node
+        result = await plan_review_node({"plan_approved": True})
+        assert result["awaiting_approval"] is False
+
+    @pytest.mark.asyncio
+    async def test_not_approved_sets_waiting(self):
+        from agent.nodes.plan_review_node import plan_review_node
+        result = await plan_review_node({"plan_approved": None})
+        assert result["awaiting_approval"] is True
+
+
+class TestPlanRouting:
+    def test_entry_to_planner_when_plan_mode(self):
+        from agent.routing import route_entry
+        assert route_entry({"plan_mode": True}) == "planner"
+
+    def test_entry_to_agent_when_not_plan_mode(self):
+        from agent.routing import route_entry
+        assert route_entry({"plan_mode": False}) == "agent"
+        assert route_entry({}) == "agent"
+
+    def test_after_review_approved_goes_agent(self):
+        from agent.routing import route_after_review
+        assert route_after_review({"plan_approved": True}) == "agent"
+
+    def test_after_review_rejected_ends(self):
+        from agent.routing import route_after_review
+        assert route_after_review({"plan_approved": False}) == "end"
+        assert route_after_review({"plan_approved": None}) == "end"

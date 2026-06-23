@@ -7,6 +7,8 @@ from agent.nodes.agent_node import agent_node
 from agent.nodes.tool_node import tool_node
 from agent.nodes.summarize_node import summarize_node
 from agent.nodes.human_node import human_node
+from agent.nodes.planner_node import planner_node
+from agent.nodes.plan_review_node import plan_review_node
 from agent.routing import should_continue, should_summarize
 
 def build_graph(checkpointer=None):
@@ -16,6 +18,8 @@ def build_graph(checkpointer=None):
     graph.add_node("tools", tool_node)
     graph.add_node("summarize", summarize_node)
     graph.add_node("human", human_node)
+    graph.add_node("planner", planner_node)
+    graph.add_node("plan_review", plan_review_node)
 
     graph.set_entry_point("agent")
 

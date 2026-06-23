@@ -23,3 +23,9 @@ def should_summarize(state: dict) -> bool:
     total_words = sum(len(str(m.content).split()) for m in state['messages'])
     total_tokens = total_words / 0.75
     return "summarize" if total_tokens > 16000 else "agent"
+
+def route_entry(state: dict) -> str:
+    return "planner" if state.get("plan_mode") else "agent"
+
+def route_after_review(state: dict) -> str:
+    return "agent" if state.get("plan_approved") is True else "end"
