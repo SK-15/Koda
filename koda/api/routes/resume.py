@@ -1,12 +1,13 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from agent.graph import compiled_graph
+from agent.graph import get_compiled_graph
 
 router = APIRouter()
 
 
 class ResumeRequest(BaseModel):
     approved: bool
+    plan: list[dict] | None = None
 
 
 class ResumeResponse(BaseModel):
@@ -16,19 +17,29 @@ class ResumeResponse(BaseModel):
 
 @router.post("/resume/{thread_id}", response_model=ResumeResponse)
 async def resume(thread_id: str, request: ResumeRequest):
+    graph = get_compiled_graph()
     config = {"configurable": {"thread_id": thread_id}}
 
-    state = await compiled_graph.aget_state(config)
-    if not state:
+    snapshot = await graph.aget_state(config)
+    if not snapshot:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    await compiled_graph.aupdate_state(
-        config,
-        {"approved": request.approved, "awaiting_approval": False},
-    )
+    values = snapshot.values
+    awaiting_plan = values.get("plan") is not None and values.get("plan_approved") is None
+
+    if awaiting_plan:
+        update = {"plan_approved": request.approved, "awaiting_approval": False}
+        if request.plan is not None:
+            update["plan"] = request.plan
+        await graph.aupdate_state(config, update)
+    else:
+        await graph.aupdate_state(
+            config,
+            {"approved": request.approved, "awaiting_approval": False},
+        )
 
     if request.approved:
-        await compiled_graph.ainvoke(None, config=config)
+        await graph.ainvoke(None, config=config)
 
     return ResumeResponse(
         thread_id=thread_id,

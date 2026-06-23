@@ -17,6 +17,7 @@ class RunRequest(BaseModel):
     budget_limit_usd: float = 2.00
     max_iterations: int = 20
     model: str | None = None
+    plan_mode: bool = False
 
 
 class RunResponse(BaseModel):
@@ -67,6 +68,10 @@ async def run(request: RunRequest, background_tasks: BackgroundTasks):
         "cost_usd": 0.0,
         "budget_limit_usd": request.budget_limit_usd,
         "model": request.model,
+        "plan": None,
+        "plan_approved": None,
+        "plan_mode": request.plan_mode,
+        "current_step": 0,
     }
 
     await set_task_status(task_id, "queued")

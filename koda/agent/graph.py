@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 
 
@@ -9,7 +9,7 @@ from agent.nodes.summarize_node import summarize_node
 from agent.nodes.human_node import human_node
 from agent.nodes.planner_node import planner_node
 from agent.nodes.plan_review_node import plan_review_node
-from agent.routing import should_continue, should_summarize
+from agent.routing import should_continue, should_summarize, route_entry, route_after_review
 
 def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
@@ -21,7 +21,11 @@ def build_graph(checkpointer=None):
     graph.add_node("planner", planner_node)
     graph.add_node("plan_review", plan_review_node)
 
-    graph.set_entry_point("agent")
+    graph.add_conditional_edges(START, route_entry, {"planner":"planner","agent":"agent"})
+
+    graph.add_edge("planner","plan_review")
+
+    graph.add_conditional_edges("plan_review", route_after_review, {"agent":"agent","end":END})
 
     graph.add_conditional_edges("agent", should_continue,
                                {"tools": "tools",
@@ -39,7 +43,7 @@ def build_graph(checkpointer=None):
         checkpointer = MemorySaver()
     return graph.compile(
         checkpointer=checkpointer,
-        interrupt_before=["human"],
+        interrupt_before=["plan_review","human"],
     )
 
 compiled_graph = None  # initialized in api/main.py lifespan with Redis checkpointer

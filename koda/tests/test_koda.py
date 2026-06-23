@@ -346,3 +346,53 @@ class TestPlanRouting:
         from agent.routing import route_after_review
         assert route_after_review({"plan_approved": False}) == "end"
         assert route_after_review({"plan_approved": None}) == "end"
+
+class TestPlanGraph:
+    def test_build_graph_has_plan_nodes(self):
+        from agent.graph import build_graph
+        g = build_graph()
+        repr_ = str(g.get_graph())
+        assert "planner" in repr_
+        assert "plan_review" in repr_
+
+    def test_build_graph_still_has_core_nodes(self):
+        from agent.graph import build_graph
+        repr_ = str(build_graph().get_graph())
+        for node in ("agent", "tools", "summarize", "human"):
+            assert node in repr_
+
+class TestAgentPlanPrompt:
+    def test_prompt_includes_plan_checklist(self):
+        from agent.nodes.agent_node import build_system_prompt
+        state = {
+            "workspace_path": "/ws",
+            "plan": [
+                {"id": 1, "description": "read file", "status": "done"},
+                {"id": 2, "description": "edit file", "status": "pending"},
+            ],
+            "current_step": 1,
+        }
+        prompt = build_system_prompt(state)
+        assert "## Plan" in prompt
+        assert "read file" in prompt
+        assert "edit file" in prompt
+
+    def test_prompt_no_plan_block_when_absent(self):
+        from agent.nodes.agent_node import build_system_prompt
+        prompt = build_system_prompt({"workspace_path": "/ws"})
+        assert "## Plan" not in prompt
+
+class TestPlanApi:
+    def test_run_request_has_plan_mode_default_false(self):
+        from api.routes.run import RunRequest
+        req = RunRequest(message="hi", workspace_path="/ws")
+        assert req.plan_mode is False
+
+    def test_resume_request_accepts_edited_plan(self):
+        from api.routes.resume import ResumeRequest
+        req = ResumeRequest(approved=True, plan=[{"id": 1, "description": "x", "status": "pending"}])
+        assert req.plan[0]["description"] == "x"
+
+    def test_resume_request_plan_defaults_none(self):
+        from api.routes.resume import ResumeRequest
+        assert ResumeRequest(approved=True).plan is None

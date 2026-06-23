@@ -19,6 +19,15 @@ def build_system_prompt(state: dict) -> str:
         parts.append(f"\n## Memory Index\n{state['memory_index']}")
     if state.get("last_error"):
         parts.append(f"\n## Last Error (adapt your strategy)\n{state['last_error']}")
+    if state.get("plan"):
+          current = state.get("current_step", 0)
+          lines = ["\n## Plan (approved — execute in order)"]
+          for i, step in enumerate(state["plan"]):
+              mark = {"done": "x", "skipped": "-", "pending": " "}.get(step.get("status"), " ")
+              pointer = "  <-- current step" if i == current else ""
+              lines.append(f"- [{mark}] {step['id']}. {step['description']}{pointer}")
+          parts.append("\n".join(lines))
+    
 
     return "\n".join(parts)
 
