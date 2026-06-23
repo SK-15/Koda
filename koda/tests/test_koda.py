@@ -287,3 +287,29 @@ class TestPlanSchema:
         import llm.router as router
         assert hasattr(router, "get_planner_llm")
         assert hasattr(router, "_build_base_llm")
+
+
+class TestPlannerNode:
+    @pytest.mark.asyncio
+    async def test_planner_builds_plan(self, monkeypatch):
+        from agent.plan_schema import Plan, PlanStep
+        import agent.nodes.planner_node as pn
+
+        class FakeLLM:
+            async def ainvoke(self, messages):
+                return Plan(steps=[PlanStep(description="step A"),
+                                    PlanStep(description="step B")])
+
+        monkeypatch.setattr(pn, "get_planner_llm", lambda model=None: FakeLLM())
+
+        from langchain_core.messages import HumanMessage
+        state = {"messages": [HumanMessage(content="do the thing")],
+                "workspace_path": "/ws", "model": None}
+        result = await pn.planner_node(state)
+
+        assert result["current_step"] == 0
+        assert result["plan_approved"] is None
+        assert result["plan"] == [
+            {"id": 1, "description": "step A", "status": "pending"},
+            {"id": 2, "description": "step B", "status": "pending"},
+        ]
