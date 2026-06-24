@@ -9,17 +9,31 @@ class Base(DeclarativeBase):
     pass
 
 
+class Project(Base):
+    __tablename__ = "projects"
+
+    project_id     = Column(String, primary_key=True)
+    org_id         = Column(String, nullable=False)
+    user_id        = Column(String, nullable=False)
+    name           = Column(String, nullable=False)
+    workspace_path = Column(String, nullable=False)
+    created_at     = Column(DateTime, server_default=func.now())
+    updated_at     = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class ThreadRecord(Base):
     __tablename__ = "threads"
 
-    thread_id = Column(String, primary_key=True)
-    org_id = Column(String, nullable=False)
-    user_id = Column(String, nullable=False)
+    thread_id    = Column(String, primary_key=True)
+    org_id       = Column(String, nullable=False)
+    user_id      = Column(String, nullable=False)
+    project_id   = Column(String, nullable=True)
+    title        = Column(String, nullable=True)
     last_message = Column(Text, nullable=True)
-    cost_usd = Column(Float, default=0.0)
-    tokens_used = Column(Integer, default=0)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    cost_usd     = Column(Float, default=0.0)
+    tokens_used  = Column(Integer, default=0)
+    created_at   = Column(DateTime, server_default=func.now())
+    updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 def _get_db_url() -> str:
@@ -32,7 +46,6 @@ def _get_db_url() -> str:
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    # strip query params asyncpg doesn't support — pass ssl via connect_args instead
     parsed = urlparse(url)
     STRIP_PARAMS = {"sslmode", "ssl", "channel_binding", "options"}
     qs = {k: v for k, v in parse_qs(parsed.query).items() if k not in STRIP_PARAMS}

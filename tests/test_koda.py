@@ -396,3 +396,247 @@ class TestPlanApi:
     def test_resume_request_plan_defaults_none(self):
         from api.routes.resume import ResumeRequest
         assert ResumeRequest(approved=True).plan is None
+
+
+# ── ORM model tests ─────────────────────────────────────────────────────────────
+
+class TestOrmModels:
+    def test_project_model_has_fields(self):
+        from infra.postgres import Project
+        cols = {c.name for c in Project.__table__.columns}
+        assert cols >= {"project_id", "org_id", "user_id", "name", "workspace_path"}
+
+    def test_thread_record_has_project_id(self):
+        from infra.postgres import ThreadRecord
+        cols = {c.name for c in ThreadRecord.__table__.columns}
+        assert "project_id" in cols
+        assert "title" in cols
+
+
+# ── Projects repo tests ─────────────────────────────────────────────────────────
+
+class TestProjectsRepo:
+    @pytest.mark.asyncio
+    async def test_create_project_returns_project(self):
+        from infra import projects_repo
+
+        class FakeSession:
+            def add(self, obj): self._obj = obj
+            async def commit(self): pass
+            async def refresh(self, obj): pass
+
+        result = await projects_repo.create_project(
+            FakeSession(), "org1", "user1", "My Project", "/ws/path"
+        )
+        assert result.org_id == "org1"
+        assert result.name == "My Project"
+        assert result.workspace_path == "/ws/path"
+        assert result.project_id is not None
+
+    @pytest.mark.asyncio
+    async def test_get_project_none_when_not_found(self):
+        from infra import projects_repo
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        result = await projects_repo.get_project(session, "bad-id", "org1", "user1")
+        assert result is None
+
+
+# ── Chats repo tests ────────────────────────────────────────────────────────────
+
+class TestChatsRepo:
+    @pytest.mark.asyncio
+    async def test_create_chat_returns_thread_record(self):
+        from infra import chats_repo
+
+        class FakeSession:
+            def add(self, obj): self._obj = obj
+            async def commit(self): pass
+            async def refresh(self, obj): pass
+
+        result = await chats_repo.create_chat(
+            FakeSession(), "proj-1", "org1", "user1", title="First chat"
+        )
+        assert result.project_id == "proj-1"
+        assert result.org_id == "org1"
+        assert result.title == "First chat"
+        assert result.thread_id is not None
+
+    @pytest.mark.asyncio
+    async def test_update_chat_meta_sets_last_message(self):
+        from infra import chats_repo
+        from unittest.mock import AsyncMock, MagicMock
+
+        row = MagicMock()
+        row.title = "existing"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = row
+
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        await chats_repo.update_chat_meta(session, "chat-1", "hello world")
+        assert row.last_message == "hello world"
+
+
+# ── Deps + serializer tests ─────────────────────────────────────────────────────
+
+class TestDepsAndSerializer:
+    @pytest.mark.asyncio
+    async def test_get_identity_returns_headers(self):
+        from api.deps import get_identity
+        result = await get_identity(x_org_id="myorg", x_user_id="myuser")
+        assert result == ("myorg", "myuser")
+
+    @pytest.mark.asyncio
+    async def test_get_identity_defaults(self):
+        from api.deps import get_identity
+        result = await get_identity()
+        assert result == ("default", "default")
+
+    def test_serialize_human_message(self):
+        from api.serializers import serialize_messages
+        from langchain_core.messages import HumanMessage
+        result = serialize_messages([HumanMessage(content="hi")])
+        assert result == [{"role": "user", "content": "hi"}]
+
+    def test_serialize_ai_message(self):
+        from api.serializers import serialize_messages
+        from langchain_core.messages import AIMessage
+        result = serialize_messages([AIMessage(content="hello")])
+        assert result == [{"role": "assistant", "content": "hello"}]
+
+    def test_serialize_mixed_messages(self):
+        from api.serializers import serialize_messages
+        from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+        msgs = [
+            HumanMessage(content="q"),
+            AIMessage(content="a"),
+            ToolMessage(content="result", tool_call_id="1"),
+        ]
+        result = serialize_messages(msgs)
+        assert result[0]["role"] == "user"
+        assert result[1]["role"] == "assistant"
+        assert result[2]["role"] == "tool"
+
+
+# ── Chat runner tests ───────────────────────────────────────────────────────────
+
+class TestChatRunner:
+    @pytest.mark.asyncio
+    async def test_first_turn_seeds_full_state(self):
+        from api.chat_runner import build_invoke_input
+        from unittest.mock import MagicMock
+
+        project = MagicMock()
+        project.workspace_path = "/ws"
+
+        result = await build_invoke_input(
+            snapshot=None,
+            message="hello",
+            plan_mode=False,
+            budget_limit_usd=2.0,
+            max_iterations=20,
+            model=None,
+            project=project,
+            org_id="org1",
+            user_id="user1",
+            chat_id="chat-1",
+        )
+        from langchain_core.messages import HumanMessage
+        assert len(result["messages"]) == 1
+        assert isinstance(result["messages"][0], HumanMessage)
+        assert result["workspace_path"] == "/ws"
+        assert result["iterations"] == 0
+        assert result["cost_usd"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_subsequent_turn_appends_and_resets(self):
+        from api.chat_runner import build_invoke_input
+        from langchain_core.messages import HumanMessage, AIMessage
+        from unittest.mock import MagicMock
+
+        prior_messages = [HumanMessage(content="q1"), AIMessage(content="a1")]
+        snapshot = MagicMock()
+        snapshot.values = {"messages": prior_messages, "cost_usd": 0.5, "tokens_used": 100}
+
+        project = MagicMock()
+        project.workspace_path = "/ws"
+
+        result = await build_invoke_input(
+            snapshot=snapshot,
+            message="q2",
+            plan_mode=True,
+            budget_limit_usd=2.0,
+            max_iterations=20,
+            model=None,
+            project=project,
+            org_id="org1",
+            user_id="user1",
+            chat_id="chat-1",
+        )
+        assert len(result["messages"]) == 3
+        assert result["messages"][-1].content == "q2"
+        assert result["iterations"] == 0
+        assert result["plan_mode"] is True
+        assert "workspace_path" not in result
+
+
+# ── Projects route tests ────────────────────────────────────────────────────────
+
+class TestProjectsRoute:
+    def test_create_project_request_validates(self):
+        from api.routes.projects import CreateProjectRequest
+        req = CreateProjectRequest(name="My App", workspace_path="/ws")
+        assert req.name == "My App"
+
+    def test_create_project_request_rejects_empty_name(self):
+        from api.routes.projects import CreateProjectRequest
+        import pytest as pt
+        with pt.raises(Exception):
+            CreateProjectRequest(name="", workspace_path="/ws")
+
+    def test_create_project_request_rejects_empty_workspace(self):
+        from api.routes.projects import CreateProjectRequest
+        import pytest as pt
+        with pt.raises(Exception):
+            CreateProjectRequest(name="App", workspace_path="")
+
+
+# ── Chats route tests ───────────────────────────────────────────────────────────
+
+class TestChatsRoute:
+    def test_send_message_request_defaults(self):
+        from api.routes.chats import SendMessageRequest
+        req = SendMessageRequest(message="do the thing")
+        assert req.plan_mode is False
+        assert req.budget_limit_usd == 2.0
+        assert req.max_iterations == 20
+        assert req.model is None
+
+    def test_send_message_request_rejects_empty_message(self):
+        from api.routes.chats import SendMessageRequest
+        import pytest as pt
+        with pt.raises(Exception):
+            SendMessageRequest(message="")
+
+
+# ── Router registration tests ───────────────────────────────────────────────────
+
+class TestRouterRegistration:
+    def test_app_has_project_routes(self):
+        from api.main import app
+        paths = {r.path for r in app.routes}
+        assert "/api/v1/projects" in paths
+
+    def test_app_has_chat_routes(self):
+        from api.main import app
+        paths = {r.path for r in app.routes}
+        assert "/api/v1/projects/{project_id}/chats" in paths
+        assert "/api/v1/chats/{chat_id}/messages" in paths
