@@ -640,3 +640,295 @@ class TestRouterRegistration:
         paths = {r.path for r in app.routes}
         assert "/api/v1/projects/{project_id}/chats" in paths
         assert "/api/v1/chats/{chat_id}/messages" in paths
+
+
+# ── Workspace backend tests ─────────────────────────────────────────────────────
+
+class TestLocalFsBackend:
+    def setup_method(self):
+        from tools.backends import LocalFsBackend
+        self.backend = LocalFsBackend()
+
+    def test_kind(self):
+        assert self.backend.kind == "local"
+
+    def test_available_tools_are_registered_tools(self):
+        names = self.backend.available_tools()
+        assert {"file_read", "file_write", "glob", "grep", "bash"} <= set(names)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_reads_file(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            Path(workspace, "hello.py").write_text("def hello(): return 'world'")
+            state = {"workspace_path": workspace}
+            result = await self.backend.dispatch("file_read", {"path": "hello.py"}, state)
+            assert "world" in result
+
+    @pytest.mark.asyncio
+    async def test_dispatch_glob(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            Path(workspace, "a.py").write_text("x=1")
+            state = {"workspace_path": workspace}
+            result = await self.backend.dispatch("glob", {"pattern": "*.py"}, state)
+            assert "a.py" in result
+
+    @pytest.mark.asyncio
+    async def test_dispatch_unknown_tool_raises(self):
+        with pytest.raises(ValueError):
+            await self.backend.dispatch("nope", {}, {"workspace_path": "/ws"})
+
+
+class TestClientProxyBackend:
+    @pytest.mark.asyncio
+    async def test_dispatch_proxies_to_request_fn(self):
+        from tools.backends import ClientProxyBackend
+        seen = {}
+
+        async def fake_request(tool_name, tool_args):
+            seen["call"] = (tool_name, tool_args)
+            return "client-side result"
+
+        backend = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        result = await backend.dispatch("file_read", {"path": "x.py"}, {})
+        assert result == "client-side result"
+        assert seen["call"] == ("file_read", {"path": "x.py"})
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_unadvertised_tool(self):
+        from tools.backends import ClientProxyBackend
+
+        async def fake_request(tool_name, tool_args):
+            return "should not be called"
+
+        backend = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        with pytest.raises(ValueError):
+            await backend.dispatch("bash", {"command": "ls"}, {})
+
+    def test_available_tools_is_capabilities(self):
+        from tools.backends import ClientProxyBackend
+        backend = ClientProxyBackend(None, capabilities=["file_read", "file_write"])
+        assert backend.available_tools() == ["file_read", "file_write"]
+
+    def test_kind(self):
+        from tools.backends import ClientProxyBackend
+        assert ClientProxyBackend(None, []).kind == "proxy"
+
+
+class TestResolveBackend:
+    def test_default_is_local(self):
+        from tools.backends import resolve_backend, LocalFsBackend
+        backend = resolve_backend({}, None)
+        assert isinstance(backend, LocalFsBackend)
+
+    def test_returns_injected_backend(self):
+        from tools.backends import resolve_backend, ClientProxyBackend
+        proxy = ClientProxyBackend(None, ["file_read"])
+        config = {"configurable": {"backend": proxy}}
+        assert resolve_backend({}, config) is proxy
+
+    def test_ignores_non_backend_config(self):
+        from tools.backends import resolve_backend, LocalFsBackend
+        config = {"configurable": {"thread_id": "abc"}}
+        assert isinstance(resolve_backend({}, config), LocalFsBackend)
+
+
+class TestPerSessionToolBinding:
+    def test_schemas_unfiltered_by_default(self):
+        from llm.router import _get_tool_schemas
+        names = {s["function"]["name"] for s in _get_tool_schemas()}
+        assert {"file_read", "bash"} <= names
+
+    def test_schemas_filtered_to_subset(self):
+        from llm.router import _get_tool_schemas
+        names = {s["function"]["name"] for s in _get_tool_schemas(["file_read", "glob"])}
+        assert names == {"file_read", "glob"}
+
+    def test_empty_subset_binds_nothing(self):
+        from llm.router import _get_tool_schemas
+        assert _get_tool_schemas([]) == []
+
+
+class TestToolNodeBackendDispatch:
+    @pytest.mark.asyncio
+    async def test_tool_node_uses_injected_proxy_backend(self):
+        from agent.nodes.tool_node import tool_node
+        from tools.backends import ClientProxyBackend
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        async def fake_request(tool_name, tool_args):
+            return f"proxied:{tool_name}"
+
+        proxy = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        ai = AIMessage(
+            content="",
+            tool_calls=[{"name": "file_read", "args": {"path": "x.py"}, "id": "call-1"}],
+        )
+        state = {"messages": [ai], "tool_attempts": {}, "workspace_path": "/ws"}
+        config = {"configurable": {"backend": proxy}}
+
+        result = await tool_node(state, config)
+
+        tool_msgs = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+        assert tool_msgs[-1].content == "proxied:file_read"
+        assert result["last_error"] is None
+
+    @pytest.mark.asyncio
+    async def test_tool_node_rejects_tool_not_in_backend(self):
+        from agent.nodes.tool_node import tool_node
+        from tools.backends import ClientProxyBackend
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        async def fake_request(tool_name, tool_args):
+            return "nope"
+
+        proxy = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        ai = AIMessage(
+            content="",
+            tool_calls=[{"name": "bash", "args": {"command": "ls"}, "id": "call-2"}],
+        )
+        state = {"messages": [ai], "tool_attempts": {}, "workspace_path": "/ws"}
+        config = {"configurable": {"backend": proxy}}
+
+        result = await tool_node(state, config)
+
+        tool_msgs = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+        assert "Unknown tool" in tool_msgs[-1].content
+        assert result["last_error"] is not None
+
+    @pytest.mark.asyncio
+    async def test_tool_node_defaults_to_local_backend(self):
+        from agent.nodes.tool_node import tool_node
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        with tempfile.TemporaryDirectory() as workspace:
+            Path(workspace, "hi.txt").write_text("hello from disk")
+            ai = AIMessage(
+                content="",
+                tool_calls=[{"name": "file_read", "args": {"path": "hi.txt"}, "id": "c1"}],
+            )
+            state = {"messages": [ai], "tool_attempts": {}, "workspace_path": workspace}
+            result = await tool_node(state)  # no config -> LocalFsBackend
+            tool_msgs = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+            assert "hello from disk" in tool_msgs[-1].content
+
+
+class TestBackendState:
+    def test_state_declares_execution_context_fields(self):
+        from agent.state import AgentState
+        ann = AgentState.__annotations__
+        assert "enabled_tools" in ann
+        assert "backend_kind" in ann
+
+
+# ── WebSocket tool bridge tests ─────────────────────────────────────────────────
+
+class TestWsToolBridge:
+    @pytest.mark.asyncio
+    async def test_request_sends_frame_and_resolves(self):
+        from infra.ws_session import WsToolBridge
+        sent = []
+
+        async def send(obj):
+            sent.append(obj)
+
+        bridge = WsToolBridge(send)
+
+        async def responder():
+            while not sent:
+                await asyncio.sleep(0)
+            call_id = sent[-1]["call_id"]
+            bridge.resolve({"type": "tool_result", "call_id": call_id, "result": "OK"})
+
+        result, _ = await asyncio.gather(
+            bridge.request_tool("file_read", {"path": "x.py"}),
+            responder(),
+        )
+        assert result == "OK"
+        assert sent[0]["type"] == "tool_request"
+        assert sent[0]["tool"] == "file_read"
+        assert sent[0]["args"] == {"path": "x.py"}
+
+    @pytest.mark.asyncio
+    async def test_tool_error_frame_becomes_error_string(self):
+        from infra.ws_session import WsToolBridge
+        sent = []
+
+        async def send(obj):
+            sent.append(obj)
+
+        bridge = WsToolBridge(send)
+
+        async def responder():
+            while not sent:
+                await asyncio.sleep(0)
+            call_id = sent[-1]["call_id"]
+            bridge.resolve({"type": "tool_error", "call_id": call_id, "error": "boom"})
+
+        result, _ = await asyncio.gather(
+            bridge.request_tool("bash", {"command": "ls"}),
+            responder(),
+        )
+        assert "Error" in result
+        assert "boom" in result
+
+    def test_resolve_unknown_call_returns_false(self):
+        from infra.ws_session import WsToolBridge
+        bridge = WsToolBridge(lambda obj: None)
+        assert bridge.resolve({"type": "tool_result", "call_id": "nope", "result": "x"}) is False
+
+    @pytest.mark.asyncio
+    async def test_fail_all_unwinds_pending(self):
+        from infra.ws_session import WsToolBridge
+        sent = []
+
+        async def send(obj):
+            sent.append(obj)
+
+        bridge = WsToolBridge(send)
+
+        async def kill():
+            while not sent:
+                await asyncio.sleep(0)
+            bridge.fail_all(RuntimeError("disconnected"))
+
+        with pytest.raises(RuntimeError):
+            await asyncio.gather(
+                bridge.request_tool("file_read", {"path": "x"}),
+                kill(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_bridge_drives_proxy_backend_end_to_end(self):
+        """The bridge's request_tool is the transport ClientProxyBackend expects."""
+        from infra.ws_session import WsToolBridge
+        from tools.backends import ClientProxyBackend
+        sent = []
+
+        async def send(obj):
+            sent.append(obj)
+
+        bridge = WsToolBridge(send)
+        backend = ClientProxyBackend(bridge.request_tool, capabilities=["file_read"])
+
+        async def responder():
+            while not sent:
+                await asyncio.sleep(0)
+            bridge.resolve({"type": "tool_result", "call_id": sent[-1]["call_id"], "result": "file body"})
+
+        result, _ = await asyncio.gather(
+            backend.dispatch("file_read", {"path": "a.py"}, {}),
+            responder(),
+        )
+        assert result == "file body"
+
+
+class TestWsRoute:
+    def test_ws_run_route_declared_on_router(self):
+        from api.routes.ws import router
+        paths = {getattr(r, "path", None) for r in router.routes}
+        assert "/ws/run" in paths
+
+    def test_ws_router_included_in_app(self):
+        import api.main as main
+        # app imports the ws router symbol; presence confirms wiring
+        assert hasattr(main, "ws_router")

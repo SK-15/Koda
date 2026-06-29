@@ -31,6 +31,8 @@ async def build_invoke_input(
             "current_step": 0,
             "memory_index": "",
             "workspace_path": project.workspace_path,
+            "enabled_tools": getattr(project, "capabilities", None),
+            "backend_kind": "local",
             "org_id": org_id,
             "user_id": user_id,
             "thread_id": chat_id,

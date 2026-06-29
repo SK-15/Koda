@@ -9,6 +9,7 @@ from api.routes.resume import router as resume_router
 from api.routes.coordinate import router as coordinate_router
 from api.routes.projects import router as projects_router
 from api.routes.chats import router as chats_router
+from api.routes.ws import router as ws_router
 
 load_dotenv()
 
@@ -39,6 +40,7 @@ app.include_router(resume_router, prefix="/api/v1")
 app.include_router(coordinate_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(chats_router, prefix="/api/v1")
+app.include_router(ws_router, prefix="/api/v1")
 
 
 @app.get("/health")

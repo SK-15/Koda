@@ -13,9 +13,11 @@ def _get_config() -> dict:
     return _config
 
 
-def _get_tool_schemas() -> list:
+def _get_tool_schemas(enabled_tools: list[str] | None = None) -> list:
     schemas = []
     for tool in all_tools():
+        if enabled_tools is not None and tool.name not in enabled_tools:
+            continue
         schemas.append({
             "type": "function",
             "function": {
@@ -58,8 +60,18 @@ def _build_base_llm(model: str = None):
     return llm
 
 
-def get_llm(model: str = None):
-    return _build_base_llm(model).bind_tools(_get_tool_schemas())
+def get_llm(model: str = None, enabled_tools: list[str] | None = None):
+    """Build the LLM bound to a session-scoped tool set.
+
+    enabled_tools=None binds all registered tools (default / local runs).
+    A capability-negotiated session passes the client-advertised subset; an
+    empty list binds no tools, yielding a pure-chat agent.
+    """
+    schemas = _get_tool_schemas(enabled_tools)
+    llm = _build_base_llm(model)
+    if not schemas:
+        return llm
+    return llm.bind_tools(schemas)
 
 
 def get_planner_llm(model: str = None):

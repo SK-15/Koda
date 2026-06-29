@@ -27,6 +27,15 @@ class AgentState(TypedDict):
     memory_index : str
     workspace_path: str
 
+    # Execution context (capability negotiation)
+    # enabled_tools: tool names bound to the LLM this session (None = all).
+    #   Driven by what the client backend advertises. [] = pure-chat, no tools.
+    # backend_kind: informational tag for the resolved WorkspaceBackend
+    #   ("local" | "proxy"); the live backend object travels via graph config,
+    #   not state, since state is checkpointed.
+    enabled_tools: list[str] | None
+    backend_kind: str
+
     # Multi-tenancy
     org_id : str
     user_id : str

@@ -18,6 +18,7 @@ class RunRequest(BaseModel):
     max_iterations: int = 20
     model: str | None = None
     plan_mode: bool = False
+    capabilities: list[str] | None = None  # tool subset to bind (None = all)
 
 
 class RunResponse(BaseModel):
@@ -72,6 +73,8 @@ async def run(request: RunRequest, background_tasks: BackgroundTasks):
         "plan_approved": None,
         "plan_mode": request.plan_mode,
         "current_step": 0,
+        "enabled_tools": request.capabilities,
+        "backend_kind": "local",
     }
 
     await set_task_status(task_id, "queued")
