@@ -20,6 +20,7 @@ class WsToolBridge:
         self._send = send            # async fn(dict) -> None
         self._pending: dict = {}     # call_id -> asyncio.Future
         self._counter = 0
+        self._approval_fut = None    # at most one approval outstanding per run
 
     async def request_tool(self, tool_name: str, tool_args: dict) -> str:
         self._counter += 1
@@ -51,9 +52,32 @@ class WsToolBridge:
             fut.set_result(frame.get("result", ""))
         return True
 
+    async def request_approval(self, payload: dict) -> dict:
+        """Send an approval_request and wait for the client's decision frame.
+
+        Returns the client's reply dict, e.g. {"approved": true, "plan": [...]}.
+        """
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._approval_fut = fut
+        await self._send({"type": "approval_request", **payload})
+        return await fut
+
+    def resolve_approval(self, frame: dict) -> bool:
+        """Resolve a pending approval from a client decision frame."""
+        fut = self._approval_fut
+        if fut is None or fut.done():
+            return False
+        self._approval_fut = None
+        fut.set_result(frame)
+        return True
+
     def fail_all(self, exc: Exception) -> None:
         """Fail every parked call (e.g. on disconnect) so the run unwinds."""
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(exc)
         self._pending.clear()
+        if self._approval_fut is not None and not self._approval_fut.done():
+            self._approval_fut.set_exception(exc)
+        self._approval_fut = None

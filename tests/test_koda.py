@@ -314,6 +314,40 @@ class TestPlannerNode:
             {"id": 2, "description": "step B", "status": "pending"},
         ]
 
+class TestHumanNode:
+    @pytest.mark.asyncio
+    async def test_approve_keeps_approval_for_routing(self):
+        from agent.nodes.human_node import human_node
+        result = await human_node({"approved": True, "messages": []})
+        assert result["awaiting_approval"] is False
+        # must NOT reset approved here, or route_after_human would send us to end
+        assert "approved" not in result or result["approved"] is True
+
+    @pytest.mark.asyncio
+    async def test_reject_sets_waiting_and_message(self):
+        from agent.nodes.human_node import human_node
+        from langchain_core.messages import AIMessage
+        result = await human_node({"approved": None, "messages": [AIMessage(content="x")]})
+        assert result["awaiting_approval"] is True
+        assert len(result["messages"]) == 2
+
+
+class TestToolNodeResetsApproval:
+    @pytest.mark.asyncio
+    async def test_approved_reset_after_tool_runs(self):
+        from agent.nodes.tool_node import tool_node
+        from langchain_core.messages import AIMessage
+        with tempfile.TemporaryDirectory() as workspace:
+            Path(workspace, "x.txt").write_text("hi")
+            ai = AIMessage(
+                content="",
+                tool_calls=[{"name": "file_read", "args": {"path": "x.txt"}, "id": "c1"}],
+            )
+            state = {"messages": [ai], "tool_attempts": {}, "workspace_path": workspace, "approved": True}
+            result = await tool_node(state)
+            assert result["approved"] is None
+
+
 class TestPlanReviewNode:
     @pytest.mark.asyncio
     async def test_approved_clears_waiting(self):
@@ -346,6 +380,16 @@ class TestPlanRouting:
         from agent.routing import route_after_review
         assert route_after_review({"plan_approved": False}) == "end"
         assert route_after_review({"plan_approved": None}) == "end"
+
+    def test_after_human_approved_goes_tools(self):
+        from agent.routing import route_after_human
+        assert route_after_human({"approved": True}) == "tools"
+
+    def test_after_human_rejected_ends(self):
+        from agent.routing import route_after_human
+        assert route_after_human({"approved": False}) == "end"
+        assert route_after_human({"approved": None}) == "end"
+        assert route_after_human({}) == "end"
 
 class TestPlanGraph:
     def test_build_graph_has_plan_nodes(self):
@@ -932,3 +976,196 @@ class TestWsRoute:
         import api.main as main
         # app imports the ws router symbol; presence confirms wiring
         assert hasattr(main, "ws_router")
+
+
+# ── WebSocket end-to-end (real socket + graph + proxy backend; fake LLM) ─────────
+
+class _ScriptedLLM:
+    """First call asks for a tool; second call answers, echoing the tool result
+    so we can prove the client's proxied result reached the agent loop."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, messages):
+        from langchain_core.messages import AIMessage, ToolMessage
+        self.calls += 1
+        meta = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        if self.calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "file_read", "args": {"path": "a.py"}, "id": "call-1"}],
+                usage_metadata=meta,
+            )
+        tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+        echoed = tool_msgs[-1].content if tool_msgs else "<none>"
+        return AIMessage(content=f"final: {echoed}", usage_metadata=meta)
+
+
+class TestWsEndToEnd:
+    def test_proxied_tool_round_trip(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        from agent.graph import build_graph
+
+        scripted = _ScriptedLLM()
+        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        # in-memory graph -> no Redis dependency for the test
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from api.routes.ws import router as ws_router
+
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            ws.send_json({"type": "message", "message": "read a.py"})
+
+            # agent should ask the client to read the file
+            req = ws.receive_json()
+            assert req["type"] == "tool_request"
+            assert req["tool"] == "file_read"
+            assert req["args"] == {"path": "a.py"}
+
+            # client executes against ITS workspace and replies
+            ws.send_json({
+                "type": "tool_result",
+                "call_id": req["call_id"],
+                "result": "FILE BODY FROM CLIENT",
+            })
+
+            done = ws.receive_json()
+            assert done["type"] == "done"
+            # proves the proxied result flowed back into the agent loop
+            assert "FILE BODY FROM CLIENT" in done["result"]
+
+    def test_tool_error_frame_propagates(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        from agent.graph import build_graph
+
+        scripted = _ScriptedLLM()
+        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from api.routes.ws import router as ws_router
+
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            ws.send_json({"type": "message", "message": "read a.py"})
+            req = ws.receive_json()
+            ws.send_json({
+                "type": "tool_error",
+                "call_id": req["call_id"],
+                "error": "ENOENT: no such file",
+            })
+            done = ws.receive_json()
+            assert done["type"] == "done"
+            assert "ENOENT" in done["result"]
+
+
+class _ScriptedBashLLM:
+    """Asks to run a bash command, then answers echoing the result."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, messages):
+        from langchain_core.messages import AIMessage, ToolMessage
+        self.calls += 1
+        meta = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        if self.calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "bash", "args": {"command": "ls"}, "id": "b1"}],
+                usage_metadata=meta,
+            )
+        tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+        echoed = tool_msgs[-1].content if tool_msgs else "<none>"
+        return AIMessage(content=f"final: {echoed}", usage_metadata=meta)
+
+
+class TestWsApprovalGate:
+    def _make_app(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        from agent.graph import build_graph
+
+        scripted = _ScriptedBashLLM()
+        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from api.routes.ws import router as ws_router
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+        return app
+
+    def test_approve_runs_the_command(self, monkeypatch):
+        from starlette.testclient import TestClient
+        app = self._make_app(monkeypatch)
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            ws.send_json({"type": "hello", "capabilities": ["bash"]})
+            ws.send_json({"type": "message", "message": "list files"})
+
+            # graph pauses for approval BEFORE running bash
+            req = ws.receive_json()
+            assert req["type"] == "approval_request"
+            assert req["kind"] == "tool"
+            assert req["tool_calls"][0]["tool"] == "bash"
+
+            ws.send_json({"type": "approval", "approved": True})
+
+            # now the approved bash is dispatched to the client
+            tool_req = ws.receive_json()
+            assert tool_req["type"] == "tool_request"
+            assert tool_req["tool"] == "bash"
+            ws.send_json({
+                "type": "tool_result",
+                "call_id": tool_req["call_id"],
+                "result": "BASH RAN ON CLIENT",
+            })
+
+            done = ws.receive_json()
+            assert done["type"] == "done"
+            assert "BASH RAN ON CLIENT" in done["result"]
+
+    def test_reject_ends_without_running(self, monkeypatch):
+        from starlette.testclient import TestClient
+        app = self._make_app(monkeypatch)
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            ws.send_json({"type": "hello", "capabilities": ["bash"]})
+            ws.send_json({"type": "message", "message": "list files"})
+
+            req = ws.receive_json()
+            assert req["type"] == "approval_request"
+
+            ws.send_json({"type": "approval", "approved": False})
+
+            # no tool_request should follow — the run ends
+            done = ws.receive_json()
+            assert done["type"] == "done"
+            assert "Awaiting human approval" in done["result"]

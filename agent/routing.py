@@ -29,3 +29,8 @@ def route_entry(state: dict) -> str:
 
 def route_after_review(state: dict) -> str:
     return "agent" if state.get("plan_approved") is True else "end"
+
+def route_after_human(state: dict) -> str:
+    # Approved -> run the pending tool (the last AIMessage's tool_calls are still
+    # the most recent message, so the tool node dispatches them). Rejected -> stop.
+    return "tools" if state.get("approved") is True else "end"

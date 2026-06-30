@@ -401,6 +401,13 @@ For the **terminal** and **web-UI** use cases the workspace lives on the **clien
 { "type": "tool_result", "call_id": "tc-1", "result": "file contents..." }
 { "type": "tool_error",  "call_id": "tc-1", "error": "ENOENT" }
 
+// server → client (agent paused for human approval — risky tool, or plan review)
+{ "type": "approval_request", "kind": "tool", "tool_calls": [{ "tool": "bash", "args": { "command": "ls" } }] }
+{ "type": "approval_request", "kind": "plan", "plan": [{ "id": 1, "description": "..." }] }
+
+// client → server (decision; for plan kind, may include an edited plan)
+{ "type": "approval", "approved": true }
+
 // server → client (run finished)
 { "type": "done", "thread_id": "org:user:uuid", "result": "Done.", "cost_usd": 0.012 }
 { "type": "error", "thread_id": "...", "error": "..." }
@@ -411,7 +418,9 @@ For the **terminal** and **web-UI** use cases the workspace lives on the **clien
 
 **Sandbox note:** in proxy mode the client enforces its own workspace boundary (terminal jails to the workspace root; browser WebContainer is already sandboxed). koda's server-side path checks apply only to the `local` backend.
 
-**Not yet over WS:** token streaming and the human-approval gate for high-risk tools (bash) — both are follow-ups; today a run that hits the approval gate returns without finishing.
+**Approval gate:** when the agent calls a high-risk tool (`bash`) or produces a plan in `plan_mode`, the run pauses and the server sends an `approval_request`. The client replies with `approval`. On approve the tool actually runs (and its result proxies back as usual); on reject the run ends. The same execution fix applies to the REST [`/resume`](#resume-approvals--plan-review) path — an approved tool now executes rather than ending the graph.
+
+**Not yet over WS:** token streaming — a follow-up; today the assistant reply is delivered once in the `done` frame rather than streamed.
 
 ---
 

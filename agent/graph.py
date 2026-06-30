@@ -9,7 +9,7 @@ from agent.nodes.summarize_node import summarize_node
 from agent.nodes.human_node import human_node
 from agent.nodes.planner_node import planner_node
 from agent.nodes.plan_review_node import plan_review_node
-from agent.routing import should_continue, should_summarize, route_entry, route_after_review
+from agent.routing import should_continue, should_summarize, route_entry, route_after_review, route_after_human
 
 def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
@@ -37,7 +37,10 @@ def build_graph(checkpointer=None):
                                 "agent": "agent"})
 
     graph.add_edge("summarize", "agent")
-    graph.add_edge("human", END)
+
+    graph.add_conditional_edges("human", route_after_human,
+                               {"tools": "tools",
+                                "end": END})
 
     if checkpointer is None:
         checkpointer = MemorySaver()

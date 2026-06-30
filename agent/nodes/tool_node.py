@@ -53,4 +53,7 @@ async def tool_node(state: dict, config: RunnableConfig | None = None) -> dict:
         "messages": messages,
         "tool_attempts": tool_attempts,
         "last_error": last_error,
+        # Consume any approval: a tool just ran, so the next risky tool must
+        # re-gate through the human node rather than reuse this grant.
+        "approved": None,
     }
