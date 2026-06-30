@@ -44,16 +44,19 @@ def _build_base_llm(model: str = None):
     provider, model_name = model.split("/", 1)
     params = get_litellm_params(model, config)
 
+    # streaming=True lets even ainvoke emit on_chat_model_stream events, which
+    # the WS layer forwards as token deltas. ainvoke still returns the full
+    # aggregated message, so non-streaming (REST) callers are unaffected.
     if provider == "anthropic":
-        llm = ChatAnthropic(model=model_name, api_key=params.get("api_key"), max_tokens=4096)
+        llm = ChatAnthropic(model=model_name, api_key=params.get("api_key"), max_tokens=4096, streaming=True)
     elif provider == "openai":
-        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"))
+        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"), streaming=True)
     elif provider == "gemini":
         llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=params.get("api_key"))
     elif provider == "ollama":
         llm = ChatOllama(model=model_name, base_url=params.get("api_base", "http://localhost:11434"))
     elif provider == "deepseek":
-        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"), base_url=params.get("api_base"))
+        llm = ChatOpenAI(model=model_name, api_key=params.get("api_key"), base_url=params.get("api_base"), streaming=True)
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 

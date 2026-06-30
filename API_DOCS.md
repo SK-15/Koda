@@ -394,6 +394,9 @@ For the **terminal** and **web-UI** use cases the workspace lives on the **clien
 { "type": "message", "message": "Add input validation", "workspace_label": "my-app",
   "plan_mode": false, "budget_limit_usd": 2.0, "max_iterations": 20, "model": null }
 
+// server → client (assistant text, streamed token-by-token before `done`)
+{ "type": "token", "delta": "Sure, I'll " }
+
 // server → client (agent wants a tool — execute it locally and reply)
 { "type": "tool_request", "call_id": "tc-1", "tool": "file_read", "args": { "path": "auth.py" } }
 
@@ -420,7 +423,7 @@ For the **terminal** and **web-UI** use cases the workspace lives on the **clien
 
 **Approval gate:** when the agent calls a high-risk tool (`bash`) or produces a plan in `plan_mode`, the run pauses and the server sends an `approval_request`. The client replies with `approval`. On approve the tool actually runs (and its result proxies back as usual); on reject the run ends. The same execution fix applies to the REST [`/resume`](#resume-approvals--plan-review) path — an approved tool now executes rather than ending the graph.
 
-**Not yet over WS:** token streaming — a follow-up; today the assistant reply is delivered once in the `done` frame rather than streamed.
+**Streaming:** the assistant's text is streamed as `token` frames (deltas) as it is generated; the full reply also arrives once in `done` for clients that ignore tokens. Only the agent's user-facing text is streamed — planner/summarize internals and tool-call arguments are not.
 
 ---
 

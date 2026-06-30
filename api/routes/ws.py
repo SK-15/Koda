@@ -23,6 +23,47 @@ def _extract_text(content) -> str:
     return str(content)
 
 
+def _chunk_text(chunk) -> str:
+    """Pull user-facing text from a streamed chat-model chunk.
+
+    Tool-call arguments arrive as tool_call_chunks (not content text), so this
+    naturally excludes partial tool JSON and yields only prose.
+    """
+    content = getattr(chunk, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                out.append(block.get("text", ""))
+            elif isinstance(block, str):
+                out.append(block)
+        return "".join(out)
+    return ""
+
+
+def _token_delta(event: dict) -> str | None:
+    """Token text to forward for a graph event, or None to skip it.
+
+    Only the `agent` node's streamed tokens are surfaced — planner (structured
+    JSON) and summarize (internal) tokens are not user-facing.
+    """
+    if event.get("event") != "on_chat_model_stream":
+        return None
+    if (event.get("metadata") or {}).get("langgraph_node") != "agent":
+        return None
+    return _chunk_text(event["data"]["chunk"]) or None
+
+
+async def _pump(graph, inp, config, send):
+    """Run the graph to its next stop, streaming agent token deltas as it goes."""
+    async for event in graph.astream_events(inp, config=config, version="v2"):
+        delta = _token_delta(event)
+        if delta:
+            await send({"type": "token", "delta": delta})
+
+
 def _build_state(frame: dict, capabilities: list[str], thread_id: str,
                  org_id: str, user_id: str) -> dict:
     return {
@@ -85,7 +126,7 @@ async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge
     config = {"configurable": {"thread_id": thread_id, "backend": backend}}
     graph = get_compiled_graph()
     try:
-        await graph.ainvoke(state, config=config)
+        await _pump(graph, state, config, send)
 
         # The graph pauses (interrupt_before) at the human gate or plan review.
         # Surface each pause to the client, apply the decision, and resume.
@@ -95,7 +136,7 @@ async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge
                 break
             decision = await bridge.request_approval(_approval_payload(snapshot.values))
             await _resolve_pause(graph, config, snapshot.values, decision)
-            await graph.ainvoke(None, config=config)
+            await _pump(graph, None, config, send)
 
         final = (await graph.aget_state(config)).values
         await send({
@@ -116,6 +157,7 @@ async def ws_run(websocket: WebSocket):
     Protocol:
       client -> {type: hello, capabilities: [...], org_id?, user_id?}
       client -> {type: message, message: "...", plan_mode?, model?, ...}
+      server -> {type: token, delta}   (streamed agent text, before done)
       server -> {type: tool_request, call_id, tool, args}
       client -> {type: tool_result, call_id, result}  |  {type: tool_error, call_id, error}
       server -> {type: approval_request, kind: "tool"|"plan", tool_calls?|plan?}

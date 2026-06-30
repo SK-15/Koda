@@ -51,8 +51,9 @@ async def agent_node(state: dict) -> str:
     llm = get_llm(model=state.get("model"), enabled_tools=state.get("enabled_tools"))
     response = await llm.ainvoke(messages)
 
-    input_tokens = response.usage_metadata.get("input_tokens", 0)
-    output_tokens = response.usage_metadata.get("output_tokens", 0)
+    usage = response.usage_metadata or {}
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
 
     cost = await record_usage(
         thread_id=state["thread_id"],

@@ -1169,3 +1169,75 @@ class TestWsApprovalGate:
             done = ws.receive_json()
             assert done["type"] == "done"
             assert "Awaiting human approval" in done["result"]
+
+
+class TestStreamingHelpers:
+    def test_chunk_text_string(self):
+        from api.routes.ws import _chunk_text
+        from langchain_core.messages import AIMessageChunk
+        assert _chunk_text(AIMessageChunk(content="hello")) == "hello"
+
+    def test_chunk_text_blocks_keeps_only_text(self):
+        from api.routes.ws import _chunk_text
+        from langchain_core.messages import AIMessageChunk
+        chunk = AIMessageChunk(content=[
+            {"type": "text", "text": "ans"},
+            {"type": "tool_use", "name": "bash", "input": {}},
+        ])
+        assert _chunk_text(chunk) == "ans"
+
+    def test_token_delta_for_agent_stream(self):
+        from api.routes.ws import _token_delta
+        from langchain_core.messages import AIMessageChunk
+        event = {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "agent"},
+            "data": {"chunk": AIMessageChunk(content="hi")},
+        }
+        assert _token_delta(event) == "hi"
+
+    def test_token_delta_skips_non_agent_node(self):
+        from api.routes.ws import _token_delta
+        from langchain_core.messages import AIMessageChunk
+        event = {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "summarize"},
+            "data": {"chunk": AIMessageChunk(content="noise")},
+        }
+        assert _token_delta(event) is None
+
+    def test_token_delta_skips_other_events(self):
+        from api.routes.ws import _token_delta
+        assert _token_delta({"event": "on_chain_start", "metadata": {}}) is None
+
+    @pytest.mark.asyncio
+    async def test_pump_forwards_agent_tokens(self):
+        from api.routes.ws import _pump
+        from langchain_core.messages import AIMessageChunk
+
+        events = [
+            {"event": "on_chain_start", "metadata": {}, "data": {}},
+            {"event": "on_chat_model_stream",
+             "metadata": {"langgraph_node": "agent"},
+             "data": {"chunk": AIMessageChunk(content="Hel")}},
+            {"event": "on_chat_model_stream",
+             "metadata": {"langgraph_node": "agent"},
+             "data": {"chunk": AIMessageChunk(content="lo")}},
+            {"event": "on_chat_model_stream",
+             "metadata": {"langgraph_node": "summarize"},
+             "data": {"chunk": AIMessageChunk(content="ignored")}},
+        ]
+
+        class _FakeGraph:
+            async def astream_events(self, inp, config=None, version=None):
+                for e in events:
+                    yield e
+
+        sent = []
+
+        async def send(obj):
+            sent.append(obj)
+
+        await _pump(_FakeGraph(), {}, {}, send)
+        deltas = [f["delta"] for f in sent if f["type"] == "token"]
+        assert deltas == ["Hel", "lo"]
