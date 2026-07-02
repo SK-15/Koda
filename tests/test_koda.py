@@ -1027,6 +1027,7 @@ class TestWsEndToEnd:
 
         with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
             ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "message", "message": "read a.py"})
 
             # agent should ask the client to read the file
@@ -1046,6 +1047,48 @@ class TestWsEndToEnd:
             assert done["type"] == "done"
             # proves the proxied result flowed back into the agent loop
             assert "FILE BODY FROM CLIENT" in done["result"]
+
+    def test_thread_reused_across_messages(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        from agent.graph import build_graph
+
+        scripted = _ScriptedLLM()
+        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from api.routes.ws import router as ws_router
+
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            ready = ws.receive_json()
+            assert ready["type"] == "ready"
+            tid = ready["thread_id"]
+
+            # turn 1: needs a tool round-trip
+            ws.send_json({"type": "message", "message": "read a.py"})
+            req = ws.receive_json()
+            assert req["type"] == "tool_request"
+            ws.send_json({"type": "tool_result", "call_id": req["call_id"], "result": "X"})
+            done1 = ws.receive_json()
+            assert done1["type"] == "done"
+            assert done1["thread_id"] == tid
+
+            # turn 2: same thread reused (scripted LLM answers directly now)
+            ws.send_json({"type": "message", "message": "and again"})
+            done2 = ws.receive_json()
+            assert done2["type"] == "done"
+            assert done2["thread_id"] == tid
 
     def test_tool_error_frame_propagates(self, monkeypatch):
         import agent.nodes.agent_node as an
@@ -1070,6 +1113,7 @@ class TestWsEndToEnd:
 
         with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
             ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "message", "message": "read a.py"})
             req = ws.receive_json()
             ws.send_json({
@@ -1129,6 +1173,7 @@ class TestWsApprovalGate:
         app = self._make_app(monkeypatch)
         with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
             ws.send_json({"type": "hello", "capabilities": ["bash"]})
+            assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "message", "message": "list files"})
 
             # graph pauses for approval BEFORE running bash
@@ -1158,6 +1203,7 @@ class TestWsApprovalGate:
         app = self._make_app(monkeypatch)
         with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
             ws.send_json({"type": "hello", "capabilities": ["bash"]})
+            assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "message", "message": "list files"})
 
             req = ws.receive_json()

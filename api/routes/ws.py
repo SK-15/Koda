@@ -120,13 +120,29 @@ async def _resolve_pause(graph, config, values: dict, decision: dict) -> None:
         await graph.aupdate_state(config, {"approved": approved, "awaiting_approval": False})
 
 
-async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge):
-    thread_id = f"{org_id}:{user_id}:{uuid.uuid4()}"
-    state = _build_state(frame, capabilities, thread_id, org_id, user_id)
+async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge, thread_id):
     config = {"configurable": {"thread_id": thread_id, "backend": backend}}
     graph = get_compiled_graph()
     try:
-        await _pump(graph, state, config, send)
+        # Reuse the thread across messages on this connection so the checkpointer
+        # preserves conversation history. On a continued turn, append to prior
+        # messages; on the first, seed full state.
+        snapshot = await graph.aget_state(config)
+        if snapshot.values.get("messages"):
+            inp = {
+                "messages": snapshot.values["messages"] + [HumanMessage(content=frame["message"])],
+                "iterations": 0,
+                "last_error": None,
+                "plan": None,
+                "plan_approved": None,
+                "plan_mode": frame.get("plan_mode", False),
+                "current_step": 0,
+                "approved": None,
+                "awaiting_approval": False,
+            }
+        else:
+            inp = _build_state(frame, capabilities, thread_id, org_id, user_id)
+        await _pump(graph, inp, config, send)
 
         # The graph pauses (interrupt_before) at the human gate or plan review.
         # Surface each pause to the client, apply the decision, and resume.
@@ -155,7 +171,8 @@ async def ws_run(websocket: WebSocket):
     """Interactive run over a duplex socket. The client owns the workspace.
 
     Protocol:
-      client -> {type: hello, capabilities: [...], org_id?, user_id?}
+      client -> {type: hello, capabilities: [...], org_id?, user_id?, thread_id?}
+      server -> {type: ready, thread_id}
       client -> {type: message, message: "...", plan_mode?, model?, ...}
       server -> {type: token, delta}   (streamed agent text, before done)
       server -> {type: tool_request, call_id, tool, args}
@@ -189,6 +206,11 @@ async def ws_run(websocket: WebSocket):
         user_id = hello.get("user_id", "default")
         backend = ClientProxyBackend(bridge.request_tool, capabilities)
 
+        # One thread per connection (reused across messages for chat continuity).
+        # The client may pass thread_id to resume an existing chat.
+        thread_id = hello.get("thread_id") or f"{org_id}:{user_id}:{uuid.uuid4()}"
+        await send({"type": "ready", "thread_id": thread_id})
+
         while True:
             frame = await websocket.receive_json()
             ftype = frame.get("type")
@@ -202,7 +224,7 @@ async def ws_run(websocket: WebSocket):
                     await send({"type": "error", "error": "a run is already in progress"})
                     continue
                 run_task = asyncio.create_task(
-                    _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge)
+                    _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge, thread_id)
                 )
             elif ftype == "close":
                 break
