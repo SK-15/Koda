@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import HumanMessage
 
 from agent.graph import get_compiled_graph
+from infra.langfuse_client import build_trace_config
 from infra.ws_session import WsToolBridge
 from tools.backends import ClientProxyBackend
 
@@ -121,7 +122,10 @@ async def _resolve_pause(graph, config, values: dict, decision: dict) -> None:
 
 
 async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge, thread_id):
-    config = {"configurable": {"thread_id": thread_id, "backend": backend}}
+    config = {
+        "configurable": {"thread_id": thread_id, "backend": backend},
+        **build_trace_config(user_id, thread_id, org_id),
+    }
     graph = get_compiled_graph()
     try:
         # Reuse the thread across messages on this connection so the checkpointer
