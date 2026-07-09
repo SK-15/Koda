@@ -1,6 +1,9 @@
+import logging
 import os
 
 from langfuse.langchain import CallbackHandler
+
+logger = logging.getLogger(__name__)
 
 
 def is_configured() -> bool:
@@ -19,8 +22,14 @@ def build_trace_config(user_id: str, session_id: str, org_id: str) -> dict:
     if not is_configured():
         return {}
 
+    try:
+        handler = CallbackHandler()
+    except Exception:
+        logger.warning("Langfuse CallbackHandler construction failed; disabling tracing for this run", exc_info=True)
+        return {}
+
     return {
-        "callbacks": [CallbackHandler()],
+        "callbacks": [handler],
         "metadata": {
             "langfuse_user_id": user_id,
             "langfuse_session_id": session_id,

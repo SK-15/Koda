@@ -49,3 +49,19 @@ class TestBuildTraceConfig:
             "langfuse_session_id": "s1",
             "org_id": "o1",
         }
+
+    def test_empty_dict_when_callback_handler_construction_raises(self, monkeypatch):
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+
+        import infra.langfuse_client as lc
+
+        class ExplodingHandler:
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(lc, "CallbackHandler", ExplodingHandler)
+
+        result = lc.build_trace_config("u1", "s1", "o1")
+
+        assert result == {}
