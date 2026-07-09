@@ -70,3 +70,6 @@ memory/*.pkl
 
 # Temp
 tmp/
+
+# Worktrees
+.worktrees/
