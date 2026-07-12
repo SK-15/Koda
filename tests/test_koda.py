@@ -749,14 +749,54 @@ class TestClientProxyBackend:
         with pytest.raises(ValueError):
             await backend.dispatch("bash", {"command": "ls"}, {})
 
-    def test_available_tools_is_capabilities(self):
+    def test_available_tools_includes_capabilities_and_server_side_tools(self):
         from tools.backends import ClientProxyBackend
         backend = ClientProxyBackend(None, capabilities=["file_read", "file_write"])
-        assert backend.available_tools() == ["file_read", "file_write"]
+        assert set(backend.available_tools()) == {"file_read", "file_write", "web_search"}
 
     def test_kind(self):
         from tools.backends import ClientProxyBackend
         assert ClientProxyBackend(None, []).kind == "proxy"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_server_side_tool_executes_locally(self, monkeypatch):
+        from tools.backends import ClientProxyBackend
+        import tools.web_search_tool as wst
+
+        class FakeTavilyClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def search(self, query, max_results=None):
+                return {"results": [{"title": "T", "url": "https://x", "content": "C"}]}
+
+        monkeypatch.setattr(wst, "TavilyClient", FakeTavilyClient)
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+        called = {"proxy": False}
+
+        async def fake_request(tool_name, tool_args):
+            called["proxy"] = True
+            return "should not be used"
+
+        backend = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        result = await backend.dispatch(
+            "web_search", {"query": "langgraph"}, {"workspace_path": "/ws"}
+        )
+
+        assert "T" in result
+        assert called["proxy"] is False
+
+    @pytest.mark.asyncio
+    async def test_dispatch_non_server_side_tool_still_proxies(self):
+        from tools.backends import ClientProxyBackend
+
+        async def fake_request(tool_name, tool_args):
+            return "client-side result"
+
+        backend = ClientProxyBackend(fake_request, capabilities=["file_read"])
+        result = await backend.dispatch("file_read", {"path": "x.py"}, {})
+        assert result == "client-side result"
 
 
 class TestResolveBackend:
