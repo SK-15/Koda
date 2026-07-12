@@ -145,7 +145,7 @@ async def _drive_run(frame, backend, capabilities, org_id, user_id, send, bridge
                 "awaiting_approval": False,
             }
         else:
-            inp = _build_state(frame, capabilities, thread_id, org_id, user_id)
+            inp = _build_state(frame, backend.available_tools(), thread_id, org_id, user_id)
         await _pump(graph, inp, config, send)
 
         # The graph pauses (interrupt_before) at the human gate or plan review.

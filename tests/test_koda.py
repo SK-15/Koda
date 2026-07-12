@@ -1043,6 +1043,27 @@ class _ScriptedLLM:
         return AIMessage(content=f"final: {echoed}", usage_metadata=meta)
 
 
+class _ScriptedWebSearchLLM:
+    """First call asks for web_search, second call echoes the tool result."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, messages):
+        from langchain_core.messages import AIMessage, ToolMessage
+        self.calls += 1
+        meta = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        if self.calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "web_search", "args": {"query": "langgraph"}, "id": "call-1"}],
+                usage_metadata=meta,
+            )
+        tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+        echoed = tool_msgs[-1].content if tool_msgs else "<none>"
+        return AIMessage(content=f"final: {echoed}", usage_metadata=meta)
+
+
 class TestWsEndToEnd:
     def test_proxied_tool_round_trip(self, monkeypatch):
         import agent.nodes.agent_node as an
@@ -1088,6 +1109,49 @@ class TestWsEndToEnd:
             assert done["type"] == "done"
             # proves the proxied result flowed back into the agent loop
             assert "FILE BODY FROM CLIENT" in done["result"]
+
+    def test_server_side_tool_runs_without_client_capability(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        import tools.web_search_tool as wst
+        from agent.graph import build_graph
+
+        class FakeTavilyClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def search(self, query, max_results=None):
+                return {"results": [{"title": "Answer", "url": "https://x", "content": "C"}]}
+
+        monkeypatch.setattr(wst, "TavilyClient", FakeTavilyClient)
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+        scripted = _ScriptedWebSearchLLM()
+        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from api.routes.ws import router as ws_router
+
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            # client declares only file_read - NOT web_search
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"type": "message", "message": "search something"})
+
+            # web_search runs server-side directly - no tool_request round trip
+            done = ws.receive_json()
+            assert done["type"] == "done"
+            assert "Answer" in done["result"]
 
     def test_trace_config_passed_to_graph_config(self, monkeypatch):
         import agent.nodes.agent_node as an
