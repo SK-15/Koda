@@ -33,6 +33,9 @@ dependencies = [
 
     # Auth (Phase 3)
     "pyjwt>=2.8.0",
+
+    # Search
+    "tavily-python>=0.7.0",
 ]
 
 [project.optional-dependencies]

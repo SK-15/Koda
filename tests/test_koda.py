@@ -141,6 +141,7 @@ class TestRegistry:
         assert "grep" in names
         assert "glob" in names
         assert "bash" in names
+        assert "web_search" in names
 
     def test_get_tool_returns_correct(self):
         from tools.registry import get_tool

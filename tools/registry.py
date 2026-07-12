@@ -3,6 +3,7 @@ from tools.file_write_tool import FileWriteTool, FileWriteInput
 from tools.grep_tool import GrepTool, GrepInput
 from tools.glob_tool import GlobTool, GlobInput
 from tools.bash_tool import BashTool, BashInput
+from tools.web_search_tool import WebSearchTool, WebSearchInput
 
 _REGISTRY: dict = {}
 
@@ -17,6 +18,7 @@ _register(FileWriteTool(), FileWriteInput)
 _register(GrepTool(), GrepInput)
 _register(GlobTool(), GlobInput)
 _register(BashTool(), BashInput)
+_register(WebSearchTool(), WebSearchInput)
 
 
 def get_tool(name: str):
