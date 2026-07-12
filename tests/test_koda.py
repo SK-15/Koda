@@ -1152,6 +1152,56 @@ class TestWsEndToEnd:
             done = ws.receive_json()
             assert done["type"] == "done"
             assert "Answer" in done["result"]
+    def test_enabled_tools_sourced_from_backend_available_tools(self, monkeypatch):
+        import agent.nodes.agent_node as an
+        import agent.graph as ag
+        import tools.web_search_tool as wst
+        from agent.graph import build_graph
+
+        class FakeTavilyClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def search(self, query, max_results=None):
+                return {"results": [{"title": "Answer", "url": "https://x", "content": "C"}]}
+
+        monkeypatch.setattr(wst, "TavilyClient", FakeTavilyClient)
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+        scripted = _ScriptedWebSearchLLM()
+        seen_enabled_tools = []
+
+        def fake_get_llm(model=None, enabled_tools=None):
+            seen_enabled_tools.append(enabled_tools)
+            return scripted
+
+        monkeypatch.setattr(an, "get_llm", fake_get_llm)
+
+        async def fake_record_usage(**kwargs):
+            return 0.0
+
+        monkeypatch.setattr(an, "record_usage", fake_record_usage)
+        monkeypatch.setattr(ag, "compiled_graph", build_graph())
+
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from api.routes.ws import router as ws_router
+
+        app = FastAPI()
+        app.include_router(ws_router, prefix="/api/v1")
+
+        with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+            # client only declares file_read - NOT web_search
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"type": "message", "message": "search something"})
+            done = ws.receive_json()
+            assert done["type"] == "done"
+
+        # proves _drive_run bound the LLM against backend.available_tools(),
+        # not the raw client-declared capabilities list
+        assert "web_search" in seen_enabled_tools[0]
+        assert "file_read" in seen_enabled_tools[0]
 
     def test_trace_config_passed_to_graph_config(self, monkeypatch):
         import agent.nodes.agent_node as an
