@@ -47,6 +47,22 @@ async def _run_chat(task_id: str, chat_id: str, invoke_input: dict):
         await set_task_status(task_id, "failed", str(e))
 
 
+@router.post("/chats")
+async def create_chat_default(
+    identity: tuple = Depends(get_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    org_id, user_id = identity
+    project = await projects_repo.get_or_create_default(db, org_id, user_id)
+    chat = await chats_repo.create_chat(db, project.project_id, org_id, user_id)
+    return {
+        "chat_id": chat.thread_id,
+        "project_id": chat.project_id,
+        "title": chat.title,
+        "created_at": chat.created_at,
+    }
+
+
 @router.post("/projects/{project_id}/chats")
 async def create_chat(
     project_id: str,

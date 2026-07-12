@@ -1,3 +1,4 @@
+import os
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,3 +45,20 @@ async def get_project(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_or_create_default(
+    db: AsyncSession, org_id: str, user_id: str
+) -> Project:
+    result = await db.execute(
+        select(Project)
+        .where(Project.org_id == org_id, Project.user_id == user_id)
+        .order_by(Project.created_at.asc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+
+    workspace_path = os.getenv("KODA_DEFAULT_WORKSPACE", os.getcwd())
+    return await create_project(db, org_id, user_id, "Default", workspace_path)
