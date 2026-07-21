@@ -2,6 +2,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["agent", "api", "coordinator", "llm", "memory", "tools", "infra"]
+
 [project]
 name = "koda"
 version = "0.1.0"
