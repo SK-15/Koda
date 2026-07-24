@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from agent.graph import get_compiled_graph
+from api.deps import get_identity
 
 router = APIRouter()
 
@@ -16,7 +17,11 @@ class ResumeResponse(BaseModel):
 
 
 @router.post("/resume/{thread_id}", response_model=ResumeResponse)
-async def resume(thread_id: str, request: ResumeRequest):
+async def resume(
+    thread_id: str,
+    request: ResumeRequest,
+    identity: tuple = Depends(get_identity),
+):
     graph = get_compiled_graph()
     config = {"configurable": {"thread_id": thread_id}}
 

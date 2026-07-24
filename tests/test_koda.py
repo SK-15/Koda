@@ -457,6 +457,138 @@ class TestOrmModels:
         assert "project_id" in cols
         assert "title" in cols
 
+    def test_user_model_has_fields(self):
+        from infra.postgres import User
+        cols = {c.name for c in User.__table__.columns}
+        assert cols >= {"user_id", "email", "password_hash"}
+
+
+# ── Auth (password hashing + session tokens) ────────────────────────────────────
+
+class TestAuth:
+    def test_hash_and_verify_password_round_trip(self):
+        from infra.auth import hash_password, verify_password
+        hashed = hash_password("correct horse battery staple")
+        assert verify_password("correct horse battery staple", hashed) is True
+
+    def test_verify_password_rejects_wrong_password(self):
+        from infra.auth import hash_password, verify_password
+        hashed = hash_password("correct horse battery staple")
+        assert verify_password("wrong password", hashed) is False
+
+    def test_session_token_round_trip(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET", "test-secret")
+        from infra.auth import create_session_token, decode_session_token
+        token = create_session_token("user-123")
+        assert decode_session_token(token) == "user-123"
+
+    def test_decode_session_token_rejects_garbage(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET", "test-secret")
+        from infra.auth import decode_session_token
+        assert decode_session_token("not-a-real-token") is None
+
+    def test_decode_session_token_rejects_wrong_secret(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET", "secret-a")
+        from infra.auth import create_session_token
+        token = create_session_token("user-123")
+
+        monkeypatch.setenv("JWT_SECRET", "secret-b")
+        from infra.auth import decode_session_token
+        assert decode_session_token(token) is None
+
+
+# ── Users repo tests ─────────────────────────────────────────────────────────────
+
+class TestUsersRepo:
+    @pytest.mark.asyncio
+    async def test_create_user_returns_user(self):
+        from infra import users_repo
+
+        class FakeSession:
+            def add(self, obj): self._obj = obj
+            async def commit(self): pass
+            async def refresh(self, obj): pass
+
+        result = await users_repo.create_user(FakeSession(), "a@b.com", "hashed")
+        assert result.email == "a@b.com"
+        assert result.password_hash == "hashed"
+        assert result.user_id is not None
+
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_none_when_not_found(self):
+        from infra import users_repo
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        result = await users_repo.get_user_by_email(session, "nobody@x.com")
+        assert result is None
+
+
+# ── Auth routes ──────────────────────────────────────────────────────────────────
+
+class TestAuthRoute:
+    @pytest.mark.asyncio
+    async def test_login_rejects_unknown_email(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
+        import api.routes.auth as auth_module
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="nobody@x.com", password="x"), Response(), session)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_login_rejects_wrong_password(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
+        from infra.auth import hash_password
+
+        user = MagicMock()
+        user.password_hash = hash_password("correct-password")
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = user
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="a@b.com", password="wrong"), Response(), session)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_login_sets_cookie_on_success(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import Response
+        from api.routes.auth import login, LoginRequest
+        from infra.auth import hash_password, COOKIE_NAME
+
+        monkeypatch.setenv("JWT_SECRET", "test-secret")
+
+        user = MagicMock()
+        user.user_id = "user-123"
+        user.email = "a@b.com"
+        user.password_hash = hash_password("correct-password")
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = user
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        response = Response()
+        result = await login(LoginRequest(email="a@b.com", password="correct-password"), response, session)
+        assert result == {"user_id": "user-123", "email": "a@b.com"}
+        assert COOKIE_NAME in response.headers.get("set-cookie", "")
+
 
 # ── Projects repo tests ─────────────────────────────────────────────────────────
 
@@ -534,16 +666,37 @@ class TestChatsRepo:
 
 class TestDepsAndSerializer:
     @pytest.mark.asyncio
-    async def test_get_identity_returns_headers(self):
-        from api.deps import get_identity
-        result = await get_identity(x_org_id="myorg", x_user_id="myuser")
-        assert result == ("myorg", "myuser")
+    async def test_get_identity_returns_user_id_as_org_and_user(self, monkeypatch):
+        import api.deps as deps
+        from starlette.requests import Request
+
+        monkeypatch.setattr(deps, "decode_session_token", lambda token: "user-123")
+        scope = {"type": "http", "headers": [(b"cookie", b"koda_session=whatever")]}
+        result = await deps.get_identity(Request(scope))
+        assert result == ("user-123", "user-123")
 
     @pytest.mark.asyncio
-    async def test_get_identity_defaults(self):
-        from api.deps import get_identity
-        result = await get_identity()
-        assert result == ("default", "default")
+    async def test_get_identity_rejects_missing_cookie(self):
+        from fastapi import HTTPException
+        from starlette.requests import Request
+        import api.deps as deps
+
+        scope = {"type": "http", "headers": []}
+        with pytest.raises(HTTPException) as exc_info:
+            await deps.get_identity(Request(scope))
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_get_identity_rejects_invalid_token(self, monkeypatch):
+        from fastapi import HTTPException
+        from starlette.requests import Request
+        import api.deps as deps
+
+        monkeypatch.setattr(deps, "decode_session_token", lambda token: None)
+        scope = {"type": "http", "headers": [(b"cookie", b"koda_session=garbage")]}
+        with pytest.raises(HTTPException) as exc_info:
+            await deps.get_identity(Request(scope))
+        assert exc_info.value.status_code == 401
 
     def test_serialize_human_message(self):
         from api.serializers import serialize_messages
@@ -1018,6 +1171,23 @@ class TestWsRoute:
         # app imports the ws router symbol; presence confirms wiring
         assert hasattr(main, "ws_router")
 
+    def test_ws_rejects_connection_without_session_cookie(self, monkeypatch):
+        import api.routes.ws as ws_module
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from starlette.websockets import WebSocketDisconnect
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: None)
+
+        app = FastAPI()
+        app.include_router(ws_module.router, prefix="/api/v1")
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
+                assert ws.receive_json() == {"type": "error", "error": "not authenticated"}
+                ws.receive_json()  # the close frame that follows
+        assert exc_info.value.code == 4401
+
 
 # ── WebSocket end-to-end (real socket + graph + proxy backend; fake LLM) ─────────
 
@@ -1082,7 +1252,10 @@ class TestWsEndToEnd:
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
 
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
@@ -1137,7 +1310,10 @@ class TestWsEndToEnd:
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
 
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
@@ -1185,7 +1361,10 @@ class TestWsEndToEnd:
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
 
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
@@ -1226,6 +1405,7 @@ class TestWsEndToEnd:
             return original(user_id, session_id, org_id)
 
         monkeypatch.setattr(ws_module, "build_trace_config", spy)
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "user-1")
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
@@ -1235,12 +1415,7 @@ class TestWsEndToEnd:
         app.include_router(ws_router, prefix="/api/v1")
 
         with TestClient(app).websocket_connect("/api/v1/ws/run") as ws:
-            ws.send_json({
-                "type": "hello",
-                "capabilities": ["file_read"],
-                "org_id": "org-1",
-                "user_id": "user-1",
-            })
+            ws.send_json({"type": "hello", "capabilities": ["file_read"]})
             ready = ws.receive_json()
             assert ready["type"] == "ready"
             tid = ready["thread_id"]
@@ -1251,7 +1426,8 @@ class TestWsEndToEnd:
             done = ws.receive_json()
             assert done["type"] == "done"
 
-        assert calls == [("user-1", tid, "org-1")]
+        # org_id and user_id are both derived from the session's user_id.
+        assert calls == [("user-1", tid, "user-1")]
 
     def test_thread_reused_across_messages(self, monkeypatch):
         import agent.nodes.agent_node as an
@@ -1269,7 +1445,10 @@ class TestWsEndToEnd:
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
 
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
@@ -1311,7 +1490,10 @@ class TestWsEndToEnd:
 
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
 
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
@@ -1368,7 +1550,11 @@ class TestWsApprovalGate:
         monkeypatch.setattr(ag, "compiled_graph", build_graph())
 
         from fastapi import FastAPI
+        import api.routes.ws as ws_module
         from api.routes.ws import router as ws_router
+
+        monkeypatch.setattr(ws_module, "decode_session_token", lambda token: "test-user")
+
         app = FastAPI()
         app.include_router(ws_router, prefix="/api/v1")
         return app

@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import HumanMessage
 
 from agent.graph import get_compiled_graph
+from infra.auth import COOKIE_NAME, decode_session_token
 from infra.langfuse_client import build_trace_config
 from infra.ws_session import WsToolBridge
 from tools.backends import ClientProxyBackend
@@ -175,7 +176,7 @@ async def ws_run(websocket: WebSocket):
     """Interactive run over a duplex socket. The client owns the workspace.
 
     Protocol:
-      client -> {type: hello, capabilities: [...], org_id?, user_id?, thread_id?}
+      client -> {type: hello, capabilities: [...], thread_id?}
       server -> {type: ready, thread_id}
       client -> {type: message, message: "...", plan_mode?, model?, ...}
       server -> {type: token, delta}   (streamed agent text, before done)
@@ -196,6 +197,13 @@ async def ws_run(websocket: WebSocket):
         async with send_lock:
             await websocket.send_json(obj)
 
+    user_id = decode_session_token(websocket.cookies.get(COOKIE_NAME))
+    if not user_id:
+        await send({"type": "error", "error": "not authenticated"})
+        await websocket.close(code=4401)
+        return
+    org_id = user_id
+
     bridge = WsToolBridge(send)
     run_task: asyncio.Task | None = None
 
@@ -206,8 +214,6 @@ async def ws_run(websocket: WebSocket):
             await websocket.close()
             return
         capabilities = hello.get("capabilities", [])
-        org_id = hello.get("org_id", "default")
-        user_id = hello.get("user_id", "default")
         backend = ClientProxyBackend(bridge.request_tool, capabilities)
 
         # One thread per connection (reused across messages for chat continuity).

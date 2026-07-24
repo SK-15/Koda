@@ -1,6 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from api.routes.run import router as run_router
@@ -10,6 +11,7 @@ from api.routes.coordinate import router as coordinate_router
 from api.routes.projects import router as projects_router
 from api.routes.chats import router as chats_router
 from api.routes.ws import router as ws_router
+from api.routes.auth import router as auth_router
 
 load_dotenv()
 
@@ -34,6 +36,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Frontend is a separate Vercel deployment (different origin), so the browser
+# needs an explicit CORS allow-list to send the session cookie cross-site.
+_frontend_origins = [o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_frontend_origins + ["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(run_router, prefix="/api/v1")
 app.include_router(status_router, prefix="/api/v1")
 app.include_router(resume_router, prefix="/api/v1")
@@ -41,6 +54,7 @@ app.include_router(coordinate_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(chats_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
 
 
 @app.get("/health")
