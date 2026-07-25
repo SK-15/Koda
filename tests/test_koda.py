@@ -589,6 +589,63 @@ class TestAuthRoute:
         assert result == {"user_id": "user-123", "email": "a@b.com"}
         assert COOKIE_NAME in response.headers.get("set-cookie", "")
 
+    @pytest.mark.asyncio
+    async def test_signup_creates_user_and_sets_cookie(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import Response
+        from api.routes.auth import signup, SignupRequest
+        import api.routes.auth as auth_module
+        from infra.auth import COOKIE_NAME
+
+        monkeypatch.setenv("JWT_SECRET", "test-secret")
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        created_user = MagicMock()
+        created_user.user_id = "user-456"
+        created_user.email = "new@example.com"
+        monkeypatch.setattr(
+            auth_module.users_repo, "create_user",
+            AsyncMock(return_value=created_user),
+        )
+
+        response = Response()
+        result = await signup(
+            SignupRequest(email="new@example.com", password="longenough"),
+            response, session,
+        )
+        assert result == {"user_id": "user-456", "email": "new@example.com"}
+        assert COOKIE_NAME in response.headers.get("set-cookie", "")
+
+    @pytest.mark.asyncio
+    async def test_signup_rejects_duplicate_email(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import signup, SignupRequest
+
+        existing_user = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing_user
+        session = AsyncMock()
+        session.execute.return_value = mock_result
+
+        with pytest.raises(HTTPException) as exc_info:
+            await signup(
+                SignupRequest(email="dup@example.com", password="longenough"),
+                Response(), session,
+            )
+        assert exc_info.value.status_code == 409
+
+    def test_signup_request_rejects_short_password(self):
+        from pydantic import ValidationError
+        from api.routes.auth import SignupRequest
+
+        with pytest.raises(ValidationError):
+            SignupRequest(email="a@b.com", password="short")
+
 
 # ── Projects repo tests ─────────────────────────────────────────────────────────
 
