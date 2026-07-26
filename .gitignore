@@ -73,3 +73,5 @@ tmp/
 
 # Worktrees
 .worktrees/
+.vercel
+.env*
