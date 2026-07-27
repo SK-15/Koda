@@ -41,6 +41,20 @@ async def list_chats(
     return list(result.scalars().all())
 
 
+async def list_all_chats(
+    db: AsyncSession, org_id: str, user_id: str
+) -> list[ThreadRecord]:
+    result = await db.execute(
+        select(ThreadRecord)
+        .where(
+            ThreadRecord.org_id == org_id,
+            ThreadRecord.user_id == user_id,
+        )
+        .order_by(ThreadRecord.updated_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def get_chat(
     db: AsyncSession, chat_id: str, org_id: str, user_id: str
 ) -> ThreadRecord | None:

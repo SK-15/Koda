@@ -188,6 +188,26 @@ List chats in a project.
 
 ---
 
+### `GET /api/v1/chats`
+
+List all chats owned by the current user, across all projects (newest updated first).
+
+**Response `200`**
+
+```json
+[
+  {
+    "chat_id": "org:user:uuid",
+    "title": "Fix the login bug",
+    "last_message": "Fix the login bug",
+    "updated_at": "2026-06-27T12:05:00Z",
+    "cost_usd": 0.0123
+  }
+]
+```
+
+---
+
 ### `GET /api/v1/chats/{chat_id}`
 
 Get a chat with its full message history.

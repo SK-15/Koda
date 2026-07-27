@@ -83,6 +83,25 @@ async def create_chat(
     }
 
 
+@router.get("/chats")
+async def list_my_chats(
+    identity: tuple = Depends(get_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    org_id, user_id = identity
+    chats = await chats_repo.list_all_chats(db, org_id, user_id)
+    return [
+        {
+            "chat_id": c.thread_id,
+            "title": c.title,
+            "last_message": c.last_message,
+            "updated_at": c.updated_at,
+            "cost_usd": c.cost_usd,
+        }
+        for c in chats
+    ]
+
+
 @router.get("/projects/{project_id}/chats")
 async def list_chats(
     project_id: str,
