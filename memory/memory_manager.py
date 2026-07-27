@@ -10,7 +10,7 @@ class MemoryManager:
         self.memory_dir.mkdir(parents=True, exist_ok=True)
     
     def load_index(self) -> str:
-        if not self.indev_path_exists():
+        if not self.index_path.exists():
             return ""
         return self.index_path.read_text()
     
