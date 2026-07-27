@@ -143,3 +143,32 @@ class TestProviderKeysRepo:
         assert result is True
         assert session.deleted == [row]
         assert session.committed is True
+
+
+class TestResolveUserKey:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_user_id_is_none(self):
+        from llm.user_keys import resolve_user_key
+        result = await resolve_user_key(None, "anthropic")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_row_from_repo(self, monkeypatch):
+        import llm.user_keys as uk
+        from infra.postgres import UserProviderKey
+        from unittest.mock import AsyncMock
+
+        row = UserProviderKey(id="id-1", user_id="user-1", alias="anthropic", provider_kind="anthropic", api_key_encrypted="enc")
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return "fake-session"
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(uk, "get_session_factory", lambda: (lambda: _FakeSessionCtx()))
+        monkeypatch.setattr(uk.provider_keys_repo, "get_by_alias", AsyncMock(return_value=row))
+
+        result = await uk.resolve_user_key("user-1", "anthropic")
+        assert result is row
