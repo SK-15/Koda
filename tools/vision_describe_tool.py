@@ -49,7 +49,7 @@ class VisionDescribeTool(BaseTool):
 
         try:
             from llm.router import _build_base_llm
-            llm = _build_base_llm(input.model)
+            llm = await _build_base_llm(input.model)
             message = HumanMessage(content=[
                 {"type": "text", "text": input.prompt},
                 {"type": "image_url", "image_url": {"url": image_url}},

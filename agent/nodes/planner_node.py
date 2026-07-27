@@ -11,7 +11,7 @@ PLANNER_PROMPT = (
 async def planner_node(state: dict) -> dict:
     workspace = state.get("workspace_path", "unknown")
     system = SystemMessage(content=f"{PLANNER_PROMPT}\nWorkspace: {workspace}")
-    llm = get_planner_llm(model=state.get("model"))
+    llm = await get_planner_llm(model=state.get("model"))
     plan_obj = await llm.ainvoke([system] + state["messages"])
 
     plan = [

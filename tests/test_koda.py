@@ -3,6 +3,7 @@ import asyncio
 import tempfile
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 
 # ── Tool tests ────────────────────────────────────────────────────────────────
@@ -301,7 +302,7 @@ class TestPlannerNode:
                 return Plan(steps=[PlanStep(description="step A"),
                                     PlanStep(description="step B")])
 
-        monkeypatch.setattr(pn, "get_planner_llm", lambda model=None: FakeLLM())
+        monkeypatch.setattr(pn, "get_planner_llm", AsyncMock(return_value=FakeLLM()))
 
         from langchain_core.messages import HumanMessage
         state = {"messages": [HumanMessage(content="do the thing")],
@@ -426,6 +427,36 @@ class TestAgentPlanPrompt:
         from agent.nodes.agent_node import build_system_prompt
         prompt = build_system_prompt({"workspace_path": "/ws"})
         assert "## Plan" not in prompt
+
+
+class TestAgentNodeKeyResolutionError:
+    @pytest.mark.asyncio
+    async def test_unknown_alias_returns_error_message_without_crashing(self, monkeypatch):
+        import agent.nodes.agent_node as an
+
+        async def fake_get_llm(*args, **kwargs):
+            raise ValueError(
+                "No key configured for 'openrouter'. Add one via POST /provider-keys or use a built-in provider."
+            )
+
+        monkeypatch.setattr(an, "get_llm", fake_get_llm)
+
+        state = {
+            "iterations": 0,
+            "max_iterations": 20,
+            "cost_usd": 0.0,
+            "budget_limit_usd": 2.0,
+            "messages": [],
+            "workspace_path": "/ws",
+            "model": "openrouter/some-model",
+            "enabled_tools": None,
+            "user_id": "user-1",
+        }
+        result = await an.agent_node(state)
+
+        assert result["iterations"] == 1
+        assert "No key configured for 'openrouter'" in result["messages"][-1].content
+
 
 class TestPlanApi:
     def test_run_request_has_plan_mode_default_false(self):
@@ -1306,7 +1337,7 @@ class TestWsEndToEnd:
         from agent.graph import build_graph
 
         scripted = _ScriptedLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0
@@ -1365,7 +1396,7 @@ class TestWsEndToEnd:
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
 
         scripted = _ScriptedWebSearchLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0
@@ -1412,7 +1443,7 @@ class TestWsEndToEnd:
         scripted = _ScriptedWebSearchLLM()
         seen_enabled_tools = []
 
-        def fake_get_llm(model=None, enabled_tools=None):
+        async def fake_get_llm(model=None, enabled_tools=None, user_id=None):
             seen_enabled_tools.append(enabled_tools)
             return scripted
 
@@ -1454,7 +1485,7 @@ class TestWsEndToEnd:
         from agent.graph import build_graph
 
         scripted = _ScriptedLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0
@@ -1500,7 +1531,7 @@ class TestWsEndToEnd:
         from agent.graph import build_graph
 
         scripted = _ScriptedLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0
@@ -1545,7 +1576,7 @@ class TestWsEndToEnd:
         from agent.graph import build_graph
 
         scripted = _ScriptedLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0
@@ -1606,7 +1637,7 @@ class TestWsApprovalGate:
         from agent.graph import build_graph
 
         scripted = _ScriptedBashLLM()
-        monkeypatch.setattr(an, "get_llm", lambda model=None, enabled_tools=None: scripted)
+        monkeypatch.setattr(an, "get_llm", AsyncMock(return_value=scripted))
 
         async def fake_record_usage(**kwargs):
             return 0.0

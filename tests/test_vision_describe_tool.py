@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from tools.vision_describe_tool import VisionDescribeTool, VisionDescribeInput
 
@@ -38,7 +39,7 @@ class TestVisionDescribeTool:
         import llm.router as router
 
         fake_llm = FakeLLM()
-        monkeypatch.setattr(router, "_build_base_llm", lambda model: fake_llm)
+        monkeypatch.setattr(router, "_build_base_llm", AsyncMock(return_value=fake_llm))
 
         result = await self.tool.execute(
             VisionDescribeInput(image="https://example.com/cat.png"),
@@ -57,7 +58,7 @@ class TestVisionDescribeTool:
         img_path.write_bytes(b"\x89PNG\r\n fake bytes")
 
         fake_llm = FakeLLM(content="a local image")
-        monkeypatch.setattr(router, "_build_base_llm", lambda model: fake_llm)
+        monkeypatch.setattr(router, "_build_base_llm", AsyncMock(return_value=fake_llm))
 
         result = await self.tool.execute(
             VisionDescribeInput(image="pic.png"),
@@ -89,7 +90,7 @@ class TestVisionDescribeTool:
         import llm.router as router
 
         fake_llm = FakeLLM(raise_exc=RuntimeError("model unavailable"))
-        monkeypatch.setattr(router, "_build_base_llm", lambda model: fake_llm)
+        monkeypatch.setattr(router, "_build_base_llm", AsyncMock(return_value=fake_llm))
 
         result = await self.tool.execute(
             VisionDescribeInput(image="https://example.com/cat.png"),

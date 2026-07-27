@@ -17,7 +17,7 @@ async def summarize_node(state: dict) -> dict:
 
     conversation_text = "\n".join(f"{type(msg).__name__}: {msg.content}" for msg in to_summarize)
 
-    llm = get_llm()
+    llm = await get_llm()
     response = await llm.ainvoke([
         HumanMessage(content=SUMMARIZE_PROMPT.format(messages=conversation_text))
     ])

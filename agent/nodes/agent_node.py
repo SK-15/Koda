@@ -48,8 +48,19 @@ async def agent_node(state: dict) -> str:
     
     system_prompt = build_system_prompt(state)
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = get_llm(model=state.get("model"), enabled_tools=state.get("enabled_tools"))
-    response = await llm.ainvoke(messages)
+
+    try:
+        llm = await get_llm(
+            model=state.get("model"),
+            enabled_tools=state.get("enabled_tools"),
+            user_id=state.get("user_id"),
+        )
+        response = await llm.ainvoke(messages)
+    except ValueError as e:
+        return {
+            "iterations": iterations,
+            "messages": state["messages"] + [AIMessage(content=str(e))],
+        }
 
     usage = response.usage_metadata or {}
     input_tokens = usage.get("input_tokens", 0)
