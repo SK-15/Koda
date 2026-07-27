@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, Float, Integer, DateTime, func
+from sqlalchemy import Column, String, Text, Float, Integer, DateTime, func, UniqueConstraint
 from sqlalchemy.pool import NullPool
 
 
@@ -43,6 +43,20 @@ class ThreadRecord(Base):
     tokens_used  = Column(Integer, default=0)
     created_at   = Column(DateTime, server_default=func.now())
     updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UserProviderKey(Base):
+    __tablename__ = "user_provider_keys"
+
+    id                = Column(String, primary_key=True)
+    user_id           = Column(String, nullable=False, index=True)
+    alias             = Column(String, nullable=False)
+    provider_kind     = Column(String, nullable=False)
+    api_key_encrypted = Column(Text, nullable=False)
+    base_url          = Column(String, nullable=True)
+    created_at        = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("user_id", "alias", name="uq_user_provider_alias"),)
 
 
 def _get_db_url() -> str:

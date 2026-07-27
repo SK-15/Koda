@@ -462,6 +462,14 @@ class TestOrmModels:
         cols = {c.name for c in User.__table__.columns}
         assert cols >= {"user_id", "email", "password_hash"}
 
+    def test_user_provider_key_model_has_fields(self):
+        from infra.postgres import UserProviderKey
+        cols = {c.name for c in UserProviderKey.__table__.columns}
+        assert cols >= {
+            "id", "user_id", "alias", "provider_kind",
+            "api_key_encrypted", "base_url", "created_at",
+        }
+
 
 # ── Auth (password hashing + session tokens) ────────────────────────────────────
 
