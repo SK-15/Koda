@@ -12,6 +12,7 @@ from api.routes.projects import router as projects_router
 from api.routes.chats import router as chats_router
 from api.routes.ws import router as ws_router
 from api.routes.auth import router as auth_router
+from api.routes.provider_keys import router as provider_keys_router
 
 load_dotenv()
 
@@ -55,6 +56,7 @@ app.include_router(projects_router, prefix="/api/v1")
 app.include_router(chats_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(provider_keys_router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -321,3 +321,123 @@ class TestBuildBaseLlmWithUserKeys:
 
         result = await router._build_base_llm("anthropic/claude-sonnet-4-5", user_id=None)
         assert captured["api_key"] == "env-key-value"
+
+
+class TestProviderKeyRequestValidation:
+    def test_rejects_unknown_provider_kind(self):
+        from pydantic import ValidationError
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        with pytest.raises(ValidationError):
+            ProviderKeyRequest(alias="x", provider_kind="not-a-real-kind", api_key="sk-1")
+
+    def test_rejects_empty_alias(self):
+        from pydantic import ValidationError
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        with pytest.raises(ValidationError):
+            ProviderKeyRequest(alias="  ", provider_kind="anthropic", api_key="sk-1")
+
+    def test_rejects_empty_api_key(self):
+        from pydantic import ValidationError
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        with pytest.raises(ValidationError):
+            ProviderKeyRequest(alias="x", provider_kind="anthropic", api_key="  ")
+
+    def test_openai_compatible_requires_base_url(self):
+        from pydantic import ValidationError
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        with pytest.raises(ValidationError):
+            ProviderKeyRequest(alias="openrouter", provider_kind="openai_compatible", api_key="sk-1")
+
+    def test_openai_compatible_with_base_url_is_valid(self):
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        req = ProviderKeyRequest(
+            alias="openrouter", provider_kind="openai_compatible",
+            api_key="sk-1", base_url="https://openrouter.ai/api/v1",
+        )
+        assert req.base_url == "https://openrouter.ai/api/v1"
+
+    def test_built_in_kind_does_not_require_base_url(self):
+        from api.routes.provider_keys import ProviderKeyRequest
+
+        req = ProviderKeyRequest(alias="anthropic", provider_kind="anthropic", api_key="sk-1")
+        assert req.base_url is None
+
+
+class TestProviderKeyRoutes:
+    @pytest.mark.asyncio
+    async def test_create_encrypts_and_never_echoes_key(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from api.routes.provider_keys import create_provider_key, ProviderKeyRequest
+        import api.routes.provider_keys as pk_module
+
+        monkeypatch.setattr(pk_module, "encrypt_key", lambda plaintext: "encrypted-" + plaintext)
+
+        captured = {}
+
+        async def fake_create_or_update(db, user_id, alias, provider_kind, api_key_encrypted, base_url):
+            captured["api_key_encrypted"] = api_key_encrypted
+            row = type("Row", (), {})()
+            row.alias = alias
+            row.provider_kind = provider_kind
+            row.base_url = base_url
+            return row
+
+        monkeypatch.setattr(pk_module.provider_keys_repo, "create_or_update", fake_create_or_update)
+
+        body = ProviderKeyRequest(alias="anthropic", provider_kind="anthropic", api_key="sk-plaintext")
+        result = await create_provider_key(body, identity=("user-1", "user-1"), db=AsyncMock())
+
+        assert result == {"alias": "anthropic", "provider_kind": "anthropic", "base_url": None}
+        assert captured["api_key_encrypted"] == "encrypted-sk-plaintext"
+        assert "api_key" not in result
+        assert "sk-plaintext" not in str(result)
+
+    @pytest.mark.asyncio
+    async def test_list_never_includes_key(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from api.routes.provider_keys import list_provider_keys
+        import api.routes.provider_keys as pk_module
+
+        row = type("Row", (), {})()
+        row.alias = "anthropic"
+        row.provider_kind = "anthropic"
+        row.base_url = None
+        row.created_at = "2026-07-27T00:00:00"
+
+        monkeypatch.setattr(pk_module.provider_keys_repo, "list_for_user", AsyncMock(return_value=[row]))
+
+        result = await list_provider_keys(identity=("user-1", "user-1"), db=AsyncMock())
+
+        assert result == [{
+            "alias": "anthropic", "provider_kind": "anthropic",
+            "base_url": None, "created_at": "2026-07-27T00:00:00",
+        }]
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_alias_raises_404(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from fastapi import HTTPException
+        from api.routes.provider_keys import delete_provider_key
+        import api.routes.provider_keys as pk_module
+
+        monkeypatch.setattr(pk_module.provider_keys_repo, "delete_by_alias", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_provider_key("nonexistent", identity=("user-1", "user-1"), db=AsyncMock())
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_existing_alias_succeeds(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from api.routes.provider_keys import delete_provider_key
+        import api.routes.provider_keys as pk_module
+
+        monkeypatch.setattr(pk_module.provider_keys_repo, "delete_by_alias", AsyncMock(return_value=True))
+
+        result = await delete_provider_key("anthropic", identity=("user-1", "user-1"), db=AsyncMock())
+        assert result == {"deleted": "anthropic"}
