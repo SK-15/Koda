@@ -172,3 +172,152 @@ class TestResolveUserKey:
 
         result = await uk.resolve_user_key("user-1", "anthropic")
         assert result is row
+
+
+class TestBuildBaseLlmWithUserKeys:
+    @pytest.mark.asyncio
+    async def test_uses_user_key_when_present(self, monkeypatch):
+        import llm.router as router
+        from infra.postgres import UserProviderKey
+
+        row = UserProviderKey(
+            id="id-1", user_id="user-1", alias="anthropic",
+            provider_kind="anthropic", api_key_encrypted="enc-key", base_url=None,
+        )
+
+        async def fake_resolve(user_id, alias):
+            assert user_id == "user-1"
+            assert alias == "anthropic"
+            return row
+
+        monkeypatch.setattr(router, "resolve_user_key", fake_resolve)
+        monkeypatch.setattr(router, "decrypt_key", lambda token: "decrypted-" + token)
+
+        captured = {}
+
+        class FakeChatAnthropic:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        import langchain_anthropic
+        monkeypatch.setattr(langchain_anthropic, "ChatAnthropic", FakeChatAnthropic)
+
+        result = await router._build_base_llm("anthropic/claude-sonnet-4-5", user_id="user-1")
+        assert captured["api_key"] == "decrypted-enc-key"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_env_key_when_no_user_row(self, monkeypatch):
+        import llm.router as router
+
+        async def fake_resolve(user_id, alias):
+            return None
+
+        monkeypatch.setattr(router, "resolve_user_key", fake_resolve)
+        # _get_config() memoizes into a module-global on first call, so real
+        # env-var expansion is order-dependent across the test session —
+        # patch the config directly instead of monkeypatch.setenv.
+        monkeypatch.setattr(router, "_get_config", lambda: {
+            "providers": {"anthropic": {"api_key": "env-key-value"}},
+            "default_model": "anthropic/claude-sonnet-4-5",
+        })
+
+        captured = {}
+
+        class FakeChatAnthropic:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        import langchain_anthropic
+        monkeypatch.setattr(langchain_anthropic, "ChatAnthropic", FakeChatAnthropic)
+
+        result = await router._build_base_llm("anthropic/claude-sonnet-4-5", user_id="user-1")
+        assert captured["api_key"] == "env-key-value"
+
+    @pytest.mark.asyncio
+    async def test_openai_compatible_user_row_passes_base_url(self, monkeypatch):
+        import llm.router as router
+        from infra.postgres import UserProviderKey
+
+        row = UserProviderKey(
+            id="id-1", user_id="user-1", alias="openrouter",
+            provider_kind="openai_compatible", api_key_encrypted="enc-key",
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+        async def fake_resolve(user_id, alias):
+            return row
+
+        monkeypatch.setattr(router, "resolve_user_key", fake_resolve)
+        monkeypatch.setattr(router, "decrypt_key", lambda token: "decrypted-" + token)
+
+        captured = {}
+
+        class FakeChatOpenAI:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        import langchain_openai
+        monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeChatOpenAI)
+
+        result = await router._build_base_llm("openrouter/mixtral-8x7b", user_id="user-1")
+        assert captured["api_key"] == "decrypted-enc-key"
+        assert captured["base_url"] == "https://openrouter.ai/api/v1"
+
+    @pytest.mark.asyncio
+    async def test_unknown_alias_with_no_user_row_raises_documented_message(self, monkeypatch):
+        import llm.router as router
+
+        async def fake_resolve(user_id, alias):
+            return None
+
+        monkeypatch.setattr(router, "resolve_user_key", fake_resolve)
+
+        with pytest.raises(ValueError, match="No key configured for 'openrouter'"):
+            await router._build_base_llm("openrouter/mixtral-8x7b", user_id="user-1")
+
+    @pytest.mark.asyncio
+    async def test_decrypt_failure_raises_generic_value_error(self, monkeypatch):
+        import llm.router as router
+        from infra.postgres import UserProviderKey
+
+        row = UserProviderKey(
+            id="id-1", user_id="user-1", alias="anthropic",
+            provider_kind="anthropic", api_key_encrypted="corrupted-token", base_url=None,
+        )
+
+        async def fake_resolve(user_id, alias):
+            return row
+
+        def fake_decrypt(token):
+            raise ValueError("Fernet token is invalid")  # simulates cryptography.fernet.InvalidToken
+
+        monkeypatch.setattr(router, "resolve_user_key", fake_resolve)
+        monkeypatch.setattr(router, "decrypt_key", fake_decrypt)
+
+        with pytest.raises(ValueError, match="Key store misconfigured"):
+            await router._build_base_llm("anthropic/claude-sonnet-4-5", user_id="user-1")
+
+    @pytest.mark.asyncio
+    async def test_no_user_id_falls_back_to_env_key(self, monkeypatch):
+        # resolve_user_key itself guards on falsy user_id (Task 4's
+        # test_returns_none_when_user_id_is_none covers that directly).
+        # This test just confirms _build_base_llm's fallback path still
+        # works end-to-end when user_id is None.
+        import llm.router as router
+
+        monkeypatch.setattr(router, "_get_config", lambda: {
+            "providers": {"anthropic": {"api_key": "env-key-value"}},
+            "default_model": "anthropic/claude-sonnet-4-5",
+        })
+
+        captured = {}
+
+        class FakeChatAnthropic:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        import langchain_anthropic
+        monkeypatch.setattr(langchain_anthropic, "ChatAnthropic", FakeChatAnthropic)
+
+        result = await router._build_base_llm("anthropic/claude-sonnet-4-5", user_id=None)
+        assert captured["api_key"] == "env-key-value"
