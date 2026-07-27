@@ -58,6 +58,9 @@ dependencies = [
 
     # MCP client
     "mcp>=1.0.0",
+
+    # Key encryption (BYOK provider keys)
+    "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
