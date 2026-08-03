@@ -572,118 +572,207 @@ class TestUsersRepo:
 
 class TestAuthRoute:
     @pytest.mark.asyncio
-    async def test_login_rejects_unknown_email(self, monkeypatch):
+    async def test_exchange_rejects_invalid_neon_token(self, monkeypatch):
         from unittest.mock import AsyncMock, MagicMock
         from fastapi import HTTPException, Response
-        from api.routes.auth import login, LoginRequest
+        from api.routes.auth import exchange, ExchangeRequest
         import api.routes.auth as auth_module
+        import jwt as pyjwt
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        session = AsyncMock()
-        session.execute.return_value = mock_result
+        monkeypatch.setattr(
+            auth_module, "verify_neon_token",
+            MagicMock(side_effect=pyjwt.PyJWTError("bad token")),
+        )
 
         with pytest.raises(HTTPException) as exc_info:
-            await login(LoginRequest(email="nobody@x.com", password="x"), Response(), session)
+            await exchange(ExchangeRequest(neon_token="garbage"), Response(), AsyncMock())
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_login_rejects_wrong_password(self, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
-        from fastapi import HTTPException, Response
-        from api.routes.auth import login, LoginRequest
-        from infra.auth import hash_password
-
-        user = MagicMock()
-        user.password_hash = hash_password("correct-password")
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = user
-        session = AsyncMock()
-        session.execute.return_value = mock_result
-
-        with pytest.raises(HTTPException) as exc_info:
-            await login(LoginRequest(email="a@b.com", password="wrong"), Response(), session)
-        assert exc_info.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_login_sets_cookie_on_success(self, monkeypatch):
+    async def test_exchange_creates_user_and_sets_both_cookies(self, monkeypatch):
         from unittest.mock import AsyncMock, MagicMock
         from fastapi import Response
-        from api.routes.auth import login, LoginRequest
-        from infra.auth import hash_password, COOKIE_NAME
+        from api.routes.auth import exchange, ExchangeRequest
+        import api.routes.auth as auth_module
+        from infra.auth import COOKIE_NAME, REFRESH_COOKIE_NAME
 
         monkeypatch.setenv("JWT_SECRET", "test-secret")
+        monkeypatch.setattr(
+            auth_module, "verify_neon_token",
+            MagicMock(return_value={"sub": "user-123", "email": "a@b.com"}),
+        )
 
         user = MagicMock()
         user.user_id = "user-123"
         user.email = "a@b.com"
-        user.password_hash = hash_password("correct-password")
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = user
-        session = AsyncMock()
-        session.execute.return_value = mock_result
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_or_create_by_sub",
+            AsyncMock(return_value=user),
+        )
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "create", AsyncMock(),
+        )
 
         response = Response()
-        result = await login(LoginRequest(email="a@b.com", password="correct-password"), response, session)
+        result = await exchange(ExchangeRequest(neon_token="valid"), response, AsyncMock())
         assert result == {"user_id": "user-123", "email": "a@b.com"}
-        assert COOKIE_NAME in response.headers.get("set-cookie", "")
+        set_cookie_headers = response.headers.getlist("set-cookie")
+        assert any(COOKIE_NAME in h for h in set_cookie_headers)
+        assert any(REFRESH_COOKIE_NAME in h for h in set_cookie_headers)
 
     @pytest.mark.asyncio
-    async def test_signup_creates_user_and_sets_cookie(self, monkeypatch):
+    async def test_refresh_rejects_missing_cookie(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import refresh
+
+        request = MagicMock()
+        request.cookies = {}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh(request, Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_rejects_unknown_token(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import refresh
+        import api.routes.auth as auth_module
+        from infra.auth import REFRESH_COOKIE_NAME
+
+        request = MagicMock()
+        request.cookies = {REFRESH_COOKIE_NAME: "unknown-token"}
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "get_by_hash",
+            AsyncMock(return_value=None),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh(request, Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_rejects_reused_token_and_revokes_family(self, monkeypatch):
+        from datetime import datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import refresh
+        import api.routes.auth as auth_module
+        from infra.auth import REFRESH_COOKIE_NAME
+
+        row = MagicMock()
+        row.family_id = "family-1"
+        row.revoked_at = datetime.utcnow()
+        row.expires_at = datetime.utcnow() + timedelta(days=1)
+
+        request = MagicMock()
+        request.cookies = {REFRESH_COOKIE_NAME: "rotated-out-token"}
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "get_by_hash",
+            AsyncMock(return_value=row),
+        )
+        revoke_family_mock = AsyncMock()
+        monkeypatch.setattr(auth_module.refresh_tokens_repo, "revoke_family", revoke_family_mock)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh(request, Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        revoke_family_mock.assert_awaited_once()
+        assert revoke_family_mock.await_args.args[1] == "family-1"
+
+    @pytest.mark.asyncio
+    async def test_refresh_rejects_expired_token(self, monkeypatch):
+        from datetime import datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import refresh
+        import api.routes.auth as auth_module
+        from infra.auth import REFRESH_COOKIE_NAME
+
+        row = MagicMock()
+        row.family_id = "family-1"
+        row.revoked_at = None
+        row.expires_at = datetime.utcnow() - timedelta(days=1)
+
+        request = MagicMock()
+        request.cookies = {REFRESH_COOKIE_NAME: "expired-token"}
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "get_by_hash",
+            AsyncMock(return_value=row),
+        )
+        revoke_family_mock = AsyncMock()
+        monkeypatch.setattr(auth_module.refresh_tokens_repo, "revoke_family", revoke_family_mock)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh(request, Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        revoke_family_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refresh_rotates_valid_token(self, monkeypatch):
+        from datetime import datetime, timedelta
         from unittest.mock import AsyncMock, MagicMock
         from fastapi import Response
-        from api.routes.auth import signup, SignupRequest
+        from api.routes.auth import refresh
         import api.routes.auth as auth_module
-        from infra.auth import COOKIE_NAME
+        from infra.auth import COOKIE_NAME, REFRESH_COOKIE_NAME
 
         monkeypatch.setenv("JWT_SECRET", "test-secret")
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        session = AsyncMock()
-        session.execute.return_value = mock_result
+        row = MagicMock()
+        row.user_id = "user-123"
+        row.family_id = "family-1"
+        row.revoked_at = None
+        row.expires_at = datetime.utcnow() + timedelta(days=1)
 
-        created_user = MagicMock()
-        created_user.user_id = "user-456"
-        created_user.email = "new@example.com"
+        request = MagicMock()
+        request.cookies = {REFRESH_COOKIE_NAME: "valid-token"}
         monkeypatch.setattr(
-            auth_module.users_repo, "create_user",
-            AsyncMock(return_value=created_user),
+            auth_module.refresh_tokens_repo, "get_by_hash",
+            AsyncMock(return_value=row),
         )
+        revoke_mock = AsyncMock()
+        create_mock = AsyncMock()
+        monkeypatch.setattr(auth_module.refresh_tokens_repo, "revoke", revoke_mock)
+        monkeypatch.setattr(auth_module.refresh_tokens_repo, "create", create_mock)
 
         response = Response()
-        result = await signup(
-            SignupRequest(email="new@example.com", password="longenough"),
-            response, session,
-        )
-        assert result == {"user_id": "user-456", "email": "new@example.com"}
-        assert COOKIE_NAME in response.headers.get("set-cookie", "")
+        result = await refresh(request, response, AsyncMock())
+        assert result == {"status": "ok"}
+        revoke_mock.assert_awaited_once_with(revoke_mock.await_args.args[0], row)
+        assert create_mock.await_args.args[1:3] == ("user-123", "family-1")
+        set_cookie_headers = response.headers.getlist("set-cookie")
+        assert any(COOKIE_NAME in h for h in set_cookie_headers)
+        assert any(REFRESH_COOKIE_NAME in h for h in set_cookie_headers)
 
     @pytest.mark.asyncio
-    async def test_signup_rejects_duplicate_email(self, monkeypatch):
+    async def test_logout_revokes_family_and_clears_cookies(self, monkeypatch):
         from unittest.mock import AsyncMock, MagicMock
-        from fastapi import HTTPException, Response
-        from api.routes.auth import signup, SignupRequest
+        from fastapi import Response
+        from api.routes.auth import logout
+        import api.routes.auth as auth_module
+        from infra.auth import COOKIE_NAME, REFRESH_COOKIE_NAME
 
-        existing_user = MagicMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing_user
-        session = AsyncMock()
-        session.execute.return_value = mock_result
+        row = MagicMock()
+        row.family_id = "family-1"
 
-        with pytest.raises(HTTPException) as exc_info:
-            await signup(
-                SignupRequest(email="dup@example.com", password="longenough"),
-                Response(), session,
-            )
-        assert exc_info.value.status_code == 409
+        request = MagicMock()
+        request.cookies = {REFRESH_COOKIE_NAME: "some-token"}
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "get_by_hash",
+            AsyncMock(return_value=row),
+        )
+        revoke_family_mock = AsyncMock()
+        monkeypatch.setattr(auth_module.refresh_tokens_repo, "revoke_family", revoke_family_mock)
 
-    def test_signup_request_rejects_short_password(self):
-        from pydantic import ValidationError
-        from api.routes.auth import SignupRequest
-
-        with pytest.raises(ValidationError):
-            SignupRequest(email="a@b.com", password="short")
+        response = Response()
+        result = await logout(request, response, AsyncMock())
+        assert result == {"status": "ok"}
+        assert revoke_family_mock.await_args.args[1] == "family-1"
+        set_cookie_headers = response.headers.getlist("set-cookie")
+        assert any(COOKIE_NAME in h and "Max-Age=0" in h for h in set_cookie_headers)
+        assert any(REFRESH_COOKIE_NAME in h and "Max-Age=0" in h for h in set_cookie_headers)
 
 
 # ── Projects repo tests ─────────────────────────────────────────────────────────

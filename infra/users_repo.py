@@ -22,3 +22,14 @@ async def create_user(db: AsyncSession, email: str, password_hash: str) -> User:
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def get_or_create_by_sub(db: AsyncSession, user_id: str, email: str) -> User:
+    user = await get_user_by_id(db, user_id)
+    if user is not None:
+        return user
+    user = User(user_id=user_id, email=email, password_hash=None)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user

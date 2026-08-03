@@ -26,7 +26,7 @@ class User(Base):
 
     user_id       = Column(String, primary_key=True)
     email         = Column(String, nullable=False, unique=True)
-    password_hash = Column(String, nullable=False)
+    password_hash = Column(String, nullable=True)
     created_at    = Column(DateTime, server_default=func.now())
 
 
@@ -57,6 +57,18 @@ class UserProviderKey(Base):
     created_at        = Column(DateTime, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("user_id", "alias", name="uq_user_provider_alias"),)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id          = Column(String, primary_key=True)
+    user_id     = Column(String, nullable=False, index=True)
+    family_id   = Column(String, nullable=False, index=True)
+    token_hash  = Column(String, nullable=False, unique=True)
+    expires_at  = Column(DateTime, nullable=False)
+    created_at  = Column(DateTime, server_default=func.now())
+    revoked_at  = Column(DateTime, nullable=True)
 
 
 def _get_db_url() -> str:
