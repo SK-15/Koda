@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from infra import refresh_tokens_repo, users_repo
 from infra.auth import (
@@ -14,12 +15,18 @@ from infra.auth import (
     create_session_token,
     decode_session_token,
     gen_refresh_token,
+    hash_password,
     hash_token,
     verify_password,
 )
 from infra.postgres import get_db
 
 router = APIRouter()
+
+# Precomputed once at import time so a login attempt against a nonexistent
+# user still pays the cost of one bcrypt comparison (timing-uniform with a
+# real user's login), without hashing a fresh dummy password per request.
+_DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-constant-time-login")
 
 
 class LoginRequest(BaseModel):
@@ -65,7 +72,9 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     user = await users_repo.get_user_by_email(db, body.email)
-    if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+    stored_hash = user.password_hash if (user and user.password_hash) else _DUMMY_PASSWORD_HASH
+    password_ok = await run_in_threadpool(verify_password, body.password, stored_hash)
+    if user is None or not user.password_hash or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     await _issue_session(db, response, user.user_id, str(uuid.uuid4()))

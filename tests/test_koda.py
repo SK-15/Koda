@@ -640,6 +640,89 @@ class TestAuthRoute:
         assert any(REFRESH_COOKIE_NAME in h for h in set_cookie_headers)
 
     @pytest.mark.asyncio
+    async def test_login_rejects_user_with_no_password_hash(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
+        import api.routes.auth as auth_module
+
+        user = MagicMock()
+        user.user_id = "user-123"
+        user.email = "a@b.com"
+        user.password_hash = None
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=user),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="a@b.com", password="whatever"), Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid email or password"
+
+    @pytest.mark.asyncio
+    async def test_login_failure_issues_nothing(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
+        import api.routes.auth as auth_module
+        from infra.auth import hash_password
+
+        user = MagicMock()
+        user.user_id = "user-123"
+        user.email = "a@b.com"
+        user.password_hash = hash_password("correct-horse")
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=user),
+        )
+        create_mock = AsyncMock()
+        monkeypatch.setattr(
+            auth_module.refresh_tokens_repo, "create", create_mock,
+        )
+
+        response = Response()
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="a@b.com", password="wrong-guess"), response, AsyncMock())
+        assert exc_info.value.status_code == 401
+        create_mock.assert_not_called()
+        assert response.headers.getlist("set-cookie") == []
+
+    @pytest.mark.asyncio
+    async def test_login_oversized_password_returns_401_not_500(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
+        import api.routes.auth as auth_module
+        from infra.auth import hash_password
+
+        long_password = "x" * 100
+
+        user = MagicMock()
+        user.user_id = "user-123"
+        user.email = "a@b.com"
+        user.password_hash = hash_password("correct-horse")
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=user),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="a@b.com", password=long_password), Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid email or password"
+
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=None),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="nobody@x.com", password=long_password), Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid email or password"
+
+    @pytest.mark.asyncio
     async def test_refresh_rejects_missing_cookie(self):
         from unittest.mock import AsyncMock, MagicMock
         from fastapi import HTTPException, Response
