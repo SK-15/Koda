@@ -15,15 +15,16 @@ from infra.auth import (
     decode_session_token,
     gen_refresh_token,
     hash_token,
-    verify_neon_token,
+    verify_password,
 )
 from infra.postgres import get_db
 
 router = APIRouter()
 
 
-class ExchangeRequest(BaseModel):
-    neon_token: str
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 def _set_session_cookie(response: Response, user_id: str) -> None:
@@ -57,23 +58,16 @@ async def _issue_session(db: AsyncSession, response: Response, user_id: str, fam
     _set_refresh_cookie(response, token)
 
 
-@router.post("/auth/exchange")
-async def exchange(
-    body: ExchangeRequest,
+@router.post("/auth/login")
+async def login(
+    body: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        claims = verify_neon_token(body.neon_token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid Neon Auth token")
+    user = await users_repo.get_user_by_email(db, body.email)
+    if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    user_id = claims.get("sub")
-    email = claims.get("email")
-    if not user_id or not email:
-        raise HTTPException(status_code=401, detail="Invalid Neon Auth token")
-
-    user = await users_repo.get_or_create_by_sub(db, user_id, email)
     await _issue_session(db, response, user.user_id, str(uuid.uuid4()))
     return {"user_id": user.user_id, "email": user.email}
 
