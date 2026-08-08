@@ -572,41 +572,60 @@ class TestUsersRepo:
 
 class TestAuthRoute:
     @pytest.mark.asyncio
-    async def test_exchange_rejects_invalid_neon_token(self, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
+    async def test_login_rejects_unknown_email(self, monkeypatch):
+        from unittest.mock import AsyncMock
         from fastapi import HTTPException, Response
-        from api.routes.auth import exchange, ExchangeRequest
+        from api.routes.auth import login, LoginRequest
         import api.routes.auth as auth_module
-        import jwt as pyjwt
 
         monkeypatch.setattr(
-            auth_module, "verify_neon_token",
-            MagicMock(side_effect=pyjwt.PyJWTError("bad token")),
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=None),
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            await exchange(ExchangeRequest(neon_token="garbage"), Response(), AsyncMock())
+            await login(LoginRequest(email="nobody@x.com", password="whatever"), Response(), AsyncMock())
         assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid email or password"
 
     @pytest.mark.asyncio
-    async def test_exchange_creates_user_and_sets_both_cookies(self, monkeypatch):
+    async def test_login_rejects_wrong_password(self, monkeypatch):
         from unittest.mock import AsyncMock, MagicMock
-        from fastapi import Response
-        from api.routes.auth import exchange, ExchangeRequest
+        from fastapi import HTTPException, Response
+        from api.routes.auth import login, LoginRequest
         import api.routes.auth as auth_module
-        from infra.auth import COOKIE_NAME, REFRESH_COOKIE_NAME
-
-        monkeypatch.setenv("JWT_SECRET", "test-secret")
-        monkeypatch.setattr(
-            auth_module, "verify_neon_token",
-            MagicMock(return_value={"sub": "user-123", "email": "a@b.com"}),
-        )
+        from infra.auth import hash_password
 
         user = MagicMock()
         user.user_id = "user-123"
         user.email = "a@b.com"
+        user.password_hash = hash_password("correct-horse")
         monkeypatch.setattr(
-            auth_module.users_repo, "get_or_create_by_sub",
+            auth_module.users_repo, "get_user_by_email",
+            AsyncMock(return_value=user),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(email="a@b.com", password="wrong-guess"), Response(), AsyncMock())
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid email or password"
+
+    @pytest.mark.asyncio
+    async def test_login_accepts_correct_password_and_sets_both_cookies(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from fastapi import Response
+        from api.routes.auth import login, LoginRequest
+        import api.routes.auth as auth_module
+        from infra.auth import COOKIE_NAME, REFRESH_COOKIE_NAME, hash_password
+
+        monkeypatch.setenv("JWT_SECRET", "test-secret")
+
+        user = MagicMock()
+        user.user_id = "user-123"
+        user.email = "a@b.com"
+        user.password_hash = hash_password("correct-horse")
+        monkeypatch.setattr(
+            auth_module.users_repo, "get_user_by_email",
             AsyncMock(return_value=user),
         )
         monkeypatch.setattr(
@@ -614,7 +633,7 @@ class TestAuthRoute:
         )
 
         response = Response()
-        result = await exchange(ExchangeRequest(neon_token="valid"), response, AsyncMock())
+        result = await login(LoginRequest(email="a@b.com", password="correct-horse"), response, AsyncMock())
         assert result == {"user_id": "user-123", "email": "a@b.com"}
         set_cookie_headers = response.headers.getlist("set-cookie")
         assert any(COOKIE_NAME in h for h in set_cookie_headers)
