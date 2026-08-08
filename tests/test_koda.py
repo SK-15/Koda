@@ -502,6 +502,45 @@ class TestOrmModels:
         }
 
 
+# ── Psycopg DSN (LangGraph Postgres checkpointer) ───────────────────────────────
+
+class TestPsycopgDsn:
+    def test_strips_asyncpg_suffix(self, monkeypatch):
+        monkeypatch.setenv("NOEN_CONN_STRING", "postgresql+asyncpg://user:pw@host/db")
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        from infra.postgres import _get_psycopg_dsn
+        dsn = _get_psycopg_dsn()
+        assert dsn.startswith("postgresql://")
+        assert "+asyncpg" not in dsn
+
+    def test_adds_sslmode_require_when_absent(self, monkeypatch):
+        monkeypatch.setenv("NOEN_CONN_STRING", "postgresql://user:pw@host/db")
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        from infra.postgres import _get_psycopg_dsn
+        dsn = _get_psycopg_dsn()
+        assert "sslmode=require" in dsn
+
+    def test_strips_asyncpg_only_params_but_keeps_sslmode(self, monkeypatch):
+        monkeypatch.setenv(
+            "NOEN_CONN_STRING",
+            "postgresql://user:pw@host/db?sslmode=require&channel_binding=require&options=x",
+        )
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        from infra.postgres import _get_psycopg_dsn
+        dsn = _get_psycopg_dsn()
+        assert "sslmode=require" in dsn
+        assert "channel_binding" not in dsn
+        assert "options" not in dsn
+
+    def test_raises_when_no_db_url_set(self, monkeypatch):
+        monkeypatch.delenv("NOEN_CONN_STRING", raising=False)
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        from infra.postgres import _get_psycopg_dsn
+        import pytest
+        with pytest.raises(RuntimeError):
+            _get_psycopg_dsn()
+
+
 # ── Auth (password hashing + session tokens) ────────────────────────────────────
 
 class TestAuth:

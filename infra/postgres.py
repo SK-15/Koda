@@ -88,6 +88,24 @@ def _get_db_url() -> str:
     return urlunparse(clean)
 
 
+def _get_psycopg_dsn() -> str:
+    from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+
+    url = os.getenv("NOEN_CONN_STRING") or os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError("No database URL set. Add NOEN_CONN_STRING to .env")
+
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    parsed = urlparse(url)
+    STRIP_PARAMS = {"ssl", "channel_binding", "options"}
+    qs = {k: v for k, v in parse_qs(parsed.query).items() if k not in STRIP_PARAMS}
+    qs["sslmode"] = ["require"]
+    clean = parsed._replace(query=urlencode(qs, doseq=True))
+    return urlunparse(clean)
+
+
 _engine = None
 _session_factory = None
 
