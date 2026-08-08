@@ -12,30 +12,12 @@ REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 COOKIE_NAME = "koda_session"
 REFRESH_COOKIE_NAME = "koda_refresh"
 
-_jwks_client = None
-
 
 def _secret() -> str:
     secret = os.getenv("JWT_SECRET")
     if not secret:
         raise RuntimeError("JWT_SECRET not set. Add it to .env")
     return secret
-
-
-def _jwks() -> jwt.PyJWKClient:
-    global _jwks_client
-    if _jwks_client is None:
-        url = os.getenv("NEON_JWKS_URL")
-        if not url:
-            raise RuntimeError("NEON_JWKS_URL not set. Add it to .env")
-        _jwks_client = jwt.PyJWKClient(url)
-    return _jwks_client
-
-
-def verify_neon_token(token: str) -> dict:
-    """Verify a Neon Auth access token via JWKS. Raises jwt.PyJWTError on failure."""
-    signing_key = _jwks().get_signing_key_from_jwt(token)
-    return jwt.decode(token, signing_key.key, algorithms=["RS256"], options={"verify_aud": False})
 
 
 def gen_refresh_token() -> str:
