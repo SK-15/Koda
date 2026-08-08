@@ -19,14 +19,22 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from contextlib import AsyncExitStack
     import agent.graph as agent_graph
     from agent.graph import build_graph
     from infra.redis_client import get_redis, close_redis
+    from infra.postgres import _get_psycopg_dsn
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     app.state.redis = await get_redis()
-    agent_graph.compiled_graph = build_graph()
 
-    yield
+    async with AsyncExitStack() as stack:
+        checkpointer = await stack.enter_async_context(
+            AsyncPostgresSaver.from_conn_string(_get_psycopg_dsn())
+        )
+        agent_graph.compiled_graph = build_graph(checkpointer=checkpointer)
+        yield
+
     await close_redis()
 
 

@@ -49,7 +49,7 @@ def build_graph(checkpointer=None):
         interrupt_before=["plan_review","human"],
     )
 
-compiled_graph = None  # initialized in api/main.py lifespan with Redis checkpointer
+compiled_graph = None  # initialized in api/main.py lifespan with a Postgres checkpointer
 
 
 def get_compiled_graph():
