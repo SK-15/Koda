@@ -50,6 +50,8 @@ def _build_client(provider_kind: str, model_name: str, api_key: str | None, base
         return ChatOllama(model=model_name, base_url=base_url or "http://localhost:11434")
     elif provider_kind == "deepseek":
         return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url or "https://api.deepseek.com/v1", streaming=True)
+    elif provider_kind == "kimi":
+        return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url or "https://api.moonshot.ai/v1", streaming=True)
     elif provider_kind == "openai_compatible":
         return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url, streaming=True)
     else:

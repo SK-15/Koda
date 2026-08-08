@@ -54,6 +54,9 @@ def get_litellm_params(model_string: str, config: dict) -> dict:
     elif provider == "deepseek":
         params["api_key"] = provider_config.get("api_key", "")
         params["api_base"] = "https://api.deepseek.com/v1"
+    elif provider == "kimi":
+        params["api_key"] = provider_config.get("api_key", "")
+        params["api_base"] = provider_config.get("base_url", "https://api.moonshot.ai/v1")
 
     return params
 

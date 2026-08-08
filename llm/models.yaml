@@ -30,5 +30,14 @@ providers:
       - deepseek-r1:8b
       - llama3.2
 
-default_model: anthropic/claude-sonnet-4-5
+  kimi:
+    api_key: ${KIMI_KEY}
+    base_url: https://api.moonshot.ai/v1
+    models:
+      - kimi-k3
+      - kimi-k2.7-code
+      - kimi-k2.7-code-highspeed
+      - kimi-k2.6
+
+default_model: kimi/kimi-k2.7-code-highspeed
 fallback_model: ollama/qwen2.5-coder:7b
