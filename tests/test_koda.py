@@ -1049,6 +1049,52 @@ class TestDepsAndSerializer:
         assert result[1]["role"] == "assistant"
         assert result[2]["role"] == "tool"
 
+    def test_serialize_ai_message_with_content_blocks_passes_through(self):
+        # Anthropic-native shape: tool_use already embedded in .content.
+        from api.serializers import serialize_messages
+        from langchain_core.messages import AIMessage
+        blocks = [
+            {"type": "text", "text": "on it"},
+            {"type": "tool_use", "id": "toolu_1", "name": "file_write", "input": {"path": "a.txt", "content": "hi"}},
+        ]
+        result = serialize_messages([AIMessage(content=blocks)])
+        assert result == [{"role": "assistant", "content": str(blocks)}]
+
+    def test_serialize_ai_message_folds_tool_calls_into_content(self):
+        # LangChain-normalized shape: empty .content, call lives in .tool_calls.
+        # Without folding, the call is silently dropped from persisted history.
+        from api.serializers import serialize_messages
+        from langchain_core.messages import AIMessage
+        msg = AIMessage(
+            content="",
+            tool_calls=[{"id": "call_1", "name": "file_write", "args": {"path": "a.txt", "content": "hi"}}],
+        )
+        result = serialize_messages([msg])
+        expected = str([
+            {"type": "tool_use", "id": "call_1", "name": "file_write", "input": {"path": "a.txt", "content": "hi"}},
+        ])
+        assert result == [{"role": "assistant", "content": expected}]
+
+    def test_serialize_ai_message_keeps_text_alongside_folded_tool_calls(self):
+        from api.serializers import serialize_messages
+        from langchain_core.messages import AIMessage
+        msg = AIMessage(
+            content="Sure, writing it now.",
+            tool_calls=[{"id": "call_1", "name": "file_write", "args": {"path": "a.txt", "content": "hi"}}],
+        )
+        result = serialize_messages([msg])
+        expected = str([
+            {"type": "text", "text": "Sure, writing it now."},
+            {"type": "tool_use", "id": "call_1", "name": "file_write", "input": {"path": "a.txt", "content": "hi"}},
+        ])
+        assert result == [{"role": "assistant", "content": expected}]
+
+    def test_serialize_ai_message_without_tool_calls_unaffected(self):
+        from api.serializers import serialize_messages
+        from langchain_core.messages import AIMessage
+        result = serialize_messages([AIMessage(content="hello", tool_calls=[])])
+        assert result == [{"role": "assistant", "content": "hello"}]
+
 
 # ── Chat runner tests ───────────────────────────────────────────────────────────
 
