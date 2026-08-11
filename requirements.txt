@@ -7,6 +7,9 @@ pyyaml>=6.0.0
 # Agent framework
 langgraph>=0.2.0
 langgraph-checkpoint-postgres>=3.1.2
+# Vercel's Python runtime has no system libpq — pull the binary wheel
+# (bundled libpq) instead of plain psycopg, which fails to import there.
+psycopg[binary]>=3.2.0
 langchain-core>=0.2.0
 langchain-anthropic>=0.1.0
 
